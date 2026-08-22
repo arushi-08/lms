@@ -70,6 +70,24 @@ from public.courses where slug = 'pilot-course';
 insert into public.courses (slug, title, status, access_type, is_free, currency)
 values ('secret-draft', 'Unreleased Course', 'draft', 'lifetime', true, 'USD');
 
+insert into public.modules (course_id, title, position)
+select id, 'Hidden Module', 1 from public.courses where slug = 'secret-draft';
+
+-- A graded attempt for Alice, so quiz_responses has something to protect.
+insert into public.quiz_attempts (quiz_id, user_id, attempt_number, submitted_at, score, passed)
+select q.id, '11111111-1111-1111-1111-111111111111', 1, now(), 100, true
+from public.quizzes q limit 1;
+
+insert into public.quiz_responses (attempt_id, question_id, is_correct, points_awarded)
+select a.id, qq.id, true, 1
+from public.quiz_attempts a
+join public.quiz_questions qq on qq.quiz_id = a.quiz_id
+limit 1;
+
+insert into public.notifications (user_id, type, title) values
+  ('11111111-1111-1111-1111-111111111111', 'welcome', 'Welcome Alice'),
+  ('22222222-2222-2222-2222-222222222222', 'welcome', 'Welcome Bob');
+
 -- Give the video lessons real content, so "cannot read it" means something.
 update public.lessons
 set video_id = 'vdo-secret-' || position, video_status = 'ready'
@@ -83,6 +101,11 @@ select tests.check('anon sees published course',
   tests.rowcount('select 1 from courses where slug = ''pilot-course''') = 1);
 select tests.check('anon CANNOT see draft course',
   tests.rowcount('select 1 from courses where slug = ''secret-draft''') = 0);
+select tests.check('anon CAN browse modules of a published course',
+  tests.rowcount('select 1 from modules') = 2);
+select tests.check('anon CANNOT see modules of a draft course',
+  tests.rowcount(
+    'select 1 from modules where title = ''Hidden Module''') = 0);
 select tests.check('anon CANNOT read lessons.video_id',
   tests.is_denied('select video_id from lessons'));
 select tests.check('anon CANNOT read quiz_options',
@@ -109,6 +132,14 @@ select tests.check('non-enrolled student sees NO quiz questions',
   tests.rowcount('select 1 from quiz_questions') = 0);
 select tests.check('has_active_enrollment false for non-enrolled',
   (select not public.has_active_enrollment(id) from courses where slug = 'pilot-course'));
+select tests.check('student sees only own notifications',
+  tests.rowcount('select 1 from notifications') = 1);
+select tests.check('student CANNOT see another student''s notifications',
+  tests.rowcount('select 1 from notifications where title = ''Welcome Alice''') = 0);
+select tests.check('student with no attempts sees no quiz responses',
+  tests.rowcount('select 1 from quiz_responses') = 0);
+select tests.check('student CANNOT see another student''s attempts',
+  tests.rowcount('select 1 from quiz_attempts') = 0);
 
 -- ------------------------------------------------- alice: signed in, enrolled --
 select tests.act_as('11111111-1111-1111-1111-111111111111', 'student');
@@ -125,6 +156,15 @@ select tests.check('enrolled student STILL cannot read video_id',
   tests.is_denied('select video_id from lessons'));
 select tests.check('has_active_enrollment true for enrolled',
   (select public.has_active_enrollment(id) from courses where slug = 'pilot-course'));
+select tests.check('student sees own quiz attempt',
+  tests.rowcount('select 1 from quiz_attempts') = 1);
+select tests.check('student sees own quiz responses',
+  tests.rowcount('select 1 from quiz_responses') = 1);
+select tests.check('student CAN mark own notification read',
+  not tests.is_denied(
+    'update notifications set read_at = now() where user_id = auth.uid()'));
+select tests.check('student CANNOT edit notification content',
+  tests.is_denied('update notifications set title = ''hacked'''));
 
 -- -------------------------------------------------- cross-tenant isolation --
 select tests.check('student sees only own profile',
