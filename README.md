@@ -75,3 +75,48 @@ These are enforced by tests, not by convention. Breaking one should fail CI.
 | A student cannot change their own `role` | column grant + tests |
 | An expired enrolment loses entitlement immediately | `has_active_enrollment()` + tests |
 | The audit log accepts no update or delete from any role | no grant + tests |
+
+## API
+
+```bash
+cd lms/apps/api
+uv venv .venv && . .venv/bin/activate
+uv pip install -e ".[dev]"
+cp .env.example .env          # defaults run against the mock video provider
+uvicorn app.main:app --reload
+```
+
+### Tests
+
+```bash
+pytest                        # 103 tests
+ruff check app tests
+```
+
+Unit tests cover grading and progress rules as pure functions. Integration tests run against
+a real Postgres with the real migrations applied (via the same shim the RLS suite uses) and
+real HS256 tokens through the real verification path — they skip automatically if no local
+Postgres is reachable.
+
+### Endpoints
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/healthz` | liveness — never touches the database |
+| `GET` | `/readyz` | readiness — checks the pool, 503 when down |
+| `POST` | `/api/lessons/{id}/playback` | entitlement check → concurrency cap → watermarked OTP |
+| `POST` | `/api/lessons/{id}/progress` | heartbeat, clamped server-side |
+| `GET` | `/api/quizzes/{id}` | questions with the answer key absent by construction |
+| `POST` | `/api/quizzes/{id}/attempts` | server-side grading |
+
+### Where authorisation lives
+
+`resolve_entitlement` in `app/security/deps.py` is the single decision point for "may this
+user touch this lesson". It is called explicitly by each route rather than applied as a
+decorator, so the check sits next to the thing it protects. If you add a route that reads
+lesson content, call it.
+
+The service authenticates to Postgres with the service role, which **bypasses RLS**. That is
+deliberate — this is the component trusted to write enrolment and progress — but it means a
+route that forgets its entitlement check is wide open. RLS is the backstop for the browser's
+own key, not for this service.

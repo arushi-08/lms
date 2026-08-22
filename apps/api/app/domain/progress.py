@@ -133,10 +133,13 @@ def apply_heartbeat(
     # arriving with a lower claim, must never un-complete it.
     completed = state.completed
     completed_at = state.completed_at
-    if not completed and duration_seconds:
-        if watched >= completion_target(duration_seconds, threshold_percent):
-            completed = True
-            completed_at = heartbeat.at
+    if (
+        not completed
+        and duration_seconds
+        and watched >= completion_target(duration_seconds, threshold_percent)
+    ):
+        completed = True
+        completed_at = heartbeat.at
 
     return ProgressUpdate(
         watched_seconds=watched,

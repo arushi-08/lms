@@ -113,7 +113,9 @@ class VdoCipherProvider:
                         "x-amz-date", "x-amz-credential", "success_action_status")
             if key in credentials
         }
-        return UploadTicket(video_id=str(video_id), upload_url=str(upload_url), upload_fields=fields)
+        return UploadTicket(
+            video_id=str(video_id), upload_url=str(upload_url), upload_fields=fields
+        )
 
     async def issue_playback(self, video_id: str, viewer: Viewer) -> PlaybackGrant:
         body: dict[str, Any] = {"ttl": self._ttl}

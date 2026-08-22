@@ -32,7 +32,9 @@ FAKE_ENCODING_SECONDS = 8
 class MockVideoProvider:
     name = "mock"
 
-    def __init__(self, *, otp_ttl_seconds: int = 300, sample_url: str = "/samples/sample.mp4") -> None:
+    def __init__(
+        self, *, otp_ttl_seconds: int = 300, sample_url: str = "/samples/sample.mp4"
+    ) -> None:
         self._ttl = otp_ttl_seconds
         self._sample_url = sample_url
         self._created_at: dict[str, datetime] = {}
