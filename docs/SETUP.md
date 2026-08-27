@@ -12,17 +12,32 @@ provider and a local Postgres — but each item unblocks the next slice.
    supabase link --project-ref <ref>
    supabase db push
    ```
-3. **Enable the access-token hook**: Authentication → Hooks → Customize Access Token →
+3. **Check what the public key can reach**, before anything else. Paste
+   `supabase/tests/check_rls_enabled.sql` into the SQL editor. Any table with the
+   verdict `EXPOSED` is readable and writable by anyone holding your anon key — which
+   ships in the browser and is therefore public. Fix those before real accounts exist.
+4. **Enable the access-token hook**: Authentication → Hooks → Customize Access Token →
    `public.custom_access_token_hook`. Without this no JWT carries `user_role`, and every
    admin RLS policy silently evaluates to false. Nothing errors; admin features just quietly
    do not work.
-4. Sign up through the app, then promote yourself in the SQL editor:
+5. Sign up through the app, then promote yourself in the SQL editor:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';
    ```
    Sign out and back in — the role only reaches your token on the next refresh.
-5. Auth settings worth changing from the defaults: require email confirmation, minimum
+6. Auth settings worth changing from the defaults: require email confirmation, minimum
    password length 10, enable the leaked-password check, turn on Turnstile captcha.
+
+7. **Verify from outside.** With the project reachable from your machine:
+   ```bash
+   export SUPABASE_URL=https://<ref>.supabase.co
+   export SUPABASE_ANON_KEY=<anon key>
+   python3 scripts/verify_supabase.py --probe-writes
+   ```
+   This probes the live project holding nothing but the public key and asserts the answer
+   key, payments, the audit log and paid lesson content are all unreachable. It refuses to
+   report success if the schema is missing or the project is unreachable — "I could not
+   check" is never reported as "it is fine".
 
 Send me the **URL and anon key**. The `service_role` key goes straight into Render and GitHub
 secrets — don't paste it into chat, and if it ever lands in a browser bundle, rotate it.

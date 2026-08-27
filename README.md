@@ -55,6 +55,20 @@ backdoor:
 ./supabase/tests/run.sh
 ```
 
+`run.sh` **drops and recreates** its target database, so it refuses to run against any
+non-local host. Pointing your Supabase pooler URL at it — the obvious way to "test against
+the real thing" — is exactly the accident that guard exists to stop.
+
+To check a *live* project instead, both of these are read-only:
+
+```bash
+# from the Supabase SQL editor: which tables lack RLS
+supabase/tests/check_rls_enabled.sql
+
+# from your machine: what the public anon key can actually reach
+SUPABASE_URL=... SUPABASE_ANON_KEY=... python3 scripts/verify_supabase.py
+```
+
 Applies the migrations to a scratch database and runs 38 adversarial RLS checks — each one an
 attack a signed-in student could really attempt with the public anon key: reading the answer
 key, reading another student's records, self-promoting to admin, forging progress, issuing
