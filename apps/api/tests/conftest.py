@@ -24,8 +24,22 @@ from pydantic import SecretStr
 
 from app.config import Settings
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-SUPABASE_DIR = REPO_ROOT / "lms" / "supabase"
+
+def _find_supabase_dir() -> Path:
+    """Locate supabase/ by walking up, not by counting parent directories.
+
+    A hardcoded parents[n] silently points at the wrong place the moment the
+    tree is moved or extracted into its own repository, and the failure looks
+    like a missing migration rather than a bad path.
+    """
+    for candidate in Path(__file__).resolve().parents:
+        supabase = candidate / "supabase"
+        if (supabase / "migrations").is_dir():
+            return supabase
+    raise RuntimeError("could not locate supabase/migrations above this file")
+
+
+SUPABASE_DIR = _find_supabase_dir()
 
 PG_HOST = os.environ.get("TEST_PG_HOST", "127.0.0.1")
 PG_PORT = os.environ.get("TEST_PG_PORT", "5432")
@@ -65,15 +79,25 @@ def _postgres_available() -> bool:
     )
 
 
-requires_postgres = pytest.mark.skipif(
-    not _postgres_available(), reason="no local Postgres available"
-)
+def _require_postgres_or_skip() -> None:
+    """Skip locally when there is no database; fail loudly in CI.
+
+    Skipping is right on a laptop with no Postgres running. It is wrong in CI,
+    where a misconfigured service container would quietly drop every integration
+    test and leave a green tick over untested code. REQUIRE_INTEGRATION_TESTS
+    turns the skip into a failure.
+    """
+    if _postgres_available():
+        return
+    message = f"no Postgres reachable at {PG_HOST}:{PG_PORT}"
+    if os.environ.get("REQUIRE_INTEGRATION_TESTS") == "1":
+        raise RuntimeError(f"{message} and REQUIRE_INTEGRATION_TESTS=1")
+    pytest.skip(message, allow_module_level=True)
 
 
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
-    if not _postgres_available():
-        pytest.skip("no local Postgres available")
+    _require_postgres_or_skip()
 
     _psql("postgres", sql=f'drop database if exists "{PG_DB}"')
     _psql("postgres", sql=f'create database "{PG_DB}"')
