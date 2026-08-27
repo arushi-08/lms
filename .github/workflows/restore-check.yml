@@ -1,0 +1,113 @@
+name: Restore verification
+
+# An untested backup is a hypothesis. This restores the most recent dump into a
+# throwaway Postgres and asserts the schema and data actually came back, on the
+# same schedule as the backup itself.
+#
+# Additional secret beyond the backup job's:
+#   LMS_AGE_SECRET_KEY   age *private* key, used only here.
+
+on:
+  schedule:
+    - cron: '40 3 * * 1'   # Mondays, after a week of nightly dumps
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: verify
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - name: Fetch the most recent backup
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          BUCKET: ${{ secrets.R2_BUCKET }}
+          ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          set -euo pipefail
+          latest=$(aws s3 ls "s3://${BUCKET}/daily/" --recursive --endpoint-url "$ENDPOINT" \
+                   | sort | tail -n1 | awk '{print $4}')
+          if [ -z "$latest" ]; then
+            echo "::error::no backups found in the bucket"; exit 1
+          fi
+          echo "restoring $latest"
+          aws s3 cp "s3://${BUCKET}/${latest}" backup.dump.age --endpoint-url "$ENDPOINT"
+
+      - name: Decrypt
+        env:
+          AGE_KEY: ${{ secrets.LMS_AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$AGE_KEY" > key.txt
+          age -d -i key.txt -o backup.dump backup.dump.age
+          shred -u key.txt
+
+      - name: Restore
+        env:
+          PGPASSWORD: verify
+        run: |
+          set -euo pipefail
+          # The dump omits roles, so create the ones Supabase objects reference.
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c \
+            "create role anon; create role authenticated; create role service_role; \
+             create role supabase_auth_admin;" postgres
+          createdb -h localhost -U postgres restored
+          pg_restore -h localhost -U postgres -d restored --no-owner --no-privileges \
+            backup.dump 2>&1 | tail -20 || true
+
+      - name: Assert the data actually came back
+        env:
+          PGPASSWORD: verify
+        run: |
+          set -euo pipefail
+          q() { psql -h localhost -U postgres -d restored -tAc "$1"; }
+
+          tables=$(q "select count(*) from information_schema.tables
+                      where table_schema = 'public' and table_type = 'BASE TABLE'")
+          echo "restored tables: $tables"
+          # 17 application tables. A restore that yields an empty schema is the
+          # exact failure this job exists to catch.
+          if [ "$tables" -lt 17 ]; then
+            echo "::error::expected at least 17 tables, found $tables"; exit 1
+          fi
+
+          for t in profiles courses modules lessons enrollments lesson_progress \
+                   quizzes quiz_questions quiz_options quiz_attempts certificates; do
+            exists=$(q "select to_regclass('public.$t') is not null")
+            if [ "$exists" != "t" ]; then
+              echo "::error::table $t is missing from the restore"; exit 1
+            fi
+          done
+
+          courses=$(q "select count(*) from courses")
+          echo "courses in restore: $courses"
+          if [ "$courses" -lt 1 ]; then
+            echo "::error::restore contains no courses -- dump may be structure-only"
+            exit 1
+          fi
+
+          echo "restore verified"
+
+      - name: Report failure
+        if: failure()
+        run: echo "::error::restore verification failed -- the backups may not be usable"

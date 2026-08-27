@@ -1,25 +1,23 @@
 # LMS Platform
 
-Pilot build. Design lives in [`../docs/lms/PLAN.md`](../docs/lms/PLAN.md); pilot scope and
-free-tier decisions in [`../docs/lms/PILOT.md`](../docs/lms/PILOT.md).
+A course platform: FastAPI backend, Supabase (Postgres + Auth + RLS), VdoCipher DRM video,
+Next.js frontend.
 
-This directory is self-contained and imports nothing from the surrounding site. To move it
-into its own repository later:
-
-```bash
-git subtree split -P lms -b lms-only
-```
+| Document | What it covers |
+|---|---|
+| [`docs/PLAN.md`](docs/PLAN.md) | Target architecture, schema, security checklist, costs |
+| [`docs/PILOT.md`](docs/PILOT.md) | Pilot scope, free-tier decisions, what is deferred |
+| [`docs/SETUP.md`](docs/SETUP.md) | External accounts and secrets, in unblocking order |
 
 ## Layout
 
 ```
-lms/
-  supabase/
-    migrations/   schema + RLS, applied in filename order (source of truth)
-    tests/        Supabase shim + adversarial RLS suite
-  apps/
-    api/          FastAPI backend
-    web/          Next.js frontend
+supabase/
+  migrations/   schema + RLS, applied in filename order (source of truth)
+  tests/        Supabase shim + adversarial RLS suite
+apps/
+  api/          FastAPI backend
+  web/          Next.js frontend (not yet built)
 ```
 
 ## Database
@@ -33,7 +31,7 @@ supabase link --project-ref <ref>
 supabase db push
 
 # or against any Postgres
-for f in lms/supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
+for f in supabase/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
 ### After the first deploy
@@ -54,7 +52,7 @@ backdoor:
 ## Tests
 
 ```bash
-./lms/supabase/tests/run.sh
+./supabase/tests/run.sh
 ```
 
 Applies the migrations to a scratch database and runs 38 adversarial RLS checks — each one an
@@ -79,7 +77,7 @@ These are enforced by tests, not by convention. Breaking one should fail CI.
 ## API
 
 ```bash
-cd lms/apps/api
+cd apps/api
 uv venv .venv && . .venv/bin/activate
 uv pip install -e ".[dev]"
 cp .env.example .env          # defaults run against the mock video provider

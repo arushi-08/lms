@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PGPASSWORD: postgres
+
+jobs:
+  database:
+    name: Schema and RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply migrations and run the RLS suite
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGDATABASE: lms_rls_test
+        run: ./supabase/tests/run.sh
+
+      # A policy without a test is a guess. Fail loudly if someone adds one and
+      # does not add a check, rather than discovering it in production.
+      - name: Every table with RLS has at least one test reference
+        run: |
+          set -euo pipefail
+          missing=0
+          tables=$(grep -ohE 'alter table public\.[a-z_]+ +enable row level security' \
+                     supabase/migrations/*.sql \
+                   | sed -E 's/alter table public\.([a-z_]+).*/\1/' | sort -u)
+          for t in $tables; do
+            if ! grep -q "\b$t\b" supabase/tests/01_rls_test.sql; then
+              echo "::error::table '$t' has RLS enabled but is never referenced in the RLS suite"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  api:
+    name: API
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: pgtest
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: uv pip install --system -e ".[dev]" anyio
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Types
+        run: mypy app
+        continue-on-error: true   # advisory until the frontend types land
+
+      - name: Tests
+        env:
+          TEST_PG_HOST: localhost
+          TEST_PG_PASSWORD: pgtest
+          # Turns "no database, skip everything" into a hard failure. A broken
+          # service container must not produce a green tick over untested code.
+          REQUIRE_INTEGRATION_TESTS: '1'
+        run: pytest -q
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A service_role key in the repository is game over: it bypasses every
+      # RLS policy in the database. Cheap to check on every push.
+      - name: Look for committed credentials
+        run: |
+          set -euo pipefail
+          # Supabase JWTs are three base64 segments starting with the JWT header
+          # for HS256; anything matching that shape does not belong in git.
+          if git grep -nIE 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}' \
+               -- . ':(exclude)*.md' ':(exclude)**/tests/**'; then
+            echo "::error::a JWT-shaped string is committed to the repository"
+            exit 1
+          fi
+          if git grep -nIE '(SUPABASE_SERVICE_ROLE_KEY|VDOCIPHER_API_SECRET|STRIPE_SECRET_KEY)[[:space:]]*=[[:space:]]*[^[:space:]"'"'"']+' \
+               -- . ':(exclude)*.md' ':(exclude)*.example'; then
+            echo "::error::a secret appears to be assigned a value in a tracked file"
+            exit 1
+          fi
+          echo "no committed secrets found"

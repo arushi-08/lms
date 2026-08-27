@@ -1,0 +1,96 @@
+name: Nightly backup
+
+# The free Supabase tier has no backups at all, and "automated backups from day
+# one" is a hard requirement, so backups are self-managed from the first commit.
+# This stays useful after the upgrade to Pro: a provider-side backup is not a
+# backup if you lose the provider account.
+#
+# Side effect worth knowing: a free Supabase project pauses after ~7 days of
+# inactivity. This job touches the database nightly, which keeps it awake.
+#
+# Required repository secrets:
+#   LMS_DATABASE_URL   Postgres connection string (the pooler URL is fine)
+#   LMS_AGE_RECIPIENT  age *public* key. The workflow can encrypt but not read
+#                      what it wrote, so a compromised runner cannot decrypt the
+#                      backup history.
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+
+on:
+  schedule:
+    - cron: '17 2 * * *'   # 02:17 UTC, off the hour to avoid the stampede
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - name: Dump
+        env:
+          DATABASE_URL: ${{ secrets.LMS_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::LMS_DATABASE_URL is not set"; exit 1
+          fi
+          # Run pg_dump from a pinned image rather than the runner's client:
+          # pg_dump refuses to talk to a server newer than itself, and Supabase
+          # upgrades Postgres on their schedule, not ours.
+          docker run --rm -e PGCONNECT_TIMEOUT=30 postgres:17-alpine \
+            pg_dump "$DATABASE_URL" \
+              --no-owner --no-privileges --format=custom \
+            > backup.dump
+          ls -l backup.dump
+
+      - name: Refuse to ship a suspiciously small dump
+        run: |
+          set -euo pipefail
+          size=$(stat -c%s backup.dump)
+          # A truncated dump uploaded without complaint is worse than no backup,
+          # because it looks like protection right up until the restore.
+          if [ "$size" -lt 4096 ]; then
+            echo "::error::dump is only ${size} bytes -- treating as a failed dump"
+            exit 1
+          fi
+          echo "dump is ${size} bytes"
+
+      - name: Encrypt
+        env:
+          RECIPIENT: ${{ secrets.LMS_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RECIPIENT:-}" ]; then
+            echo "::error::LMS_AGE_RECIPIENT is not set"; exit 1
+          fi
+          age -r "$RECIPIENT" -o "backup.dump.age" backup.dump
+          # The plaintext never leaves this step.
+          shred -u backup.dump
+
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # R2 rejects the newer default integrity headers from aws-cli v2.23+.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          BUCKET: ${{ secrets.R2_BUCKET }}
+          ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          set -euo pipefail
+          key="daily/$(date -u +%Y/%m/%d)/lms-$(date -u +%Y%m%dT%H%M%SZ).dump.age"
+          aws s3 cp backup.dump.age "s3://${BUCKET}/${key}" --endpoint-url "$ENDPOINT"
+          echo "uploaded ${key}"
+          # Retention is a bucket lifecycle rule (30 days), not a delete loop
+          # here -- a workflow that can delete backups is a workflow that can
+          # delete all of them.
+
+      - name: Report failure
+        if: failure()
+        run: echo "::error::nightly backup failed -- investigate before the next run"
