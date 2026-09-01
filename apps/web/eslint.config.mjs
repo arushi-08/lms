@@ -1,8 +1,11 @@
-import { FlatCompat } from "@eslint/eslintrc";
-
-const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
+// Flat config. Next 16 removed `next lint` and eslint-config-next now ships
+// flat configs directly, so there is no FlatCompat shim here — the previous
+// compat-based config threw a schema error rather than linting anything.
+import coreWebVitals from "eslint-config-next/core-web-vitals";
+import typescript from "eslint-config-next/typescript";
 
 export default [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
-  { ignores: [".next/**", "node_modules/**"] },
+  { ignores: [".next/**", "node_modules/**", "next-env.d.ts"] },
+  ...coreWebVitals,
+  ...typescript,
 ];

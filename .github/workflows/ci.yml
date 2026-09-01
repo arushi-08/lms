@@ -113,7 +113,9 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Lint
-        run: npx next lint --dir src || npx eslint src
+        # `next lint` was removed in Next 16; eslint-config-next ships flat
+        # configs that eslint consumes directly.
+        run: npx eslint src
 
       - name: Build
         # Placeholders only. src/lib/env.ts throws on a missing variable, which

@@ -18,7 +18,6 @@ export function reportAuthError(context: string, error: unknown): string {
       error instanceof Error
         ? `${error.name}: ${error.message}`
         : JSON.stringify(error);
-    // eslint-disable-next-line no-console
     console.error(
       `[auth:${context}] ${detail}\n` +
         "  (shown to the user as a deliberately generic message; " +

@@ -68,14 +68,22 @@ export function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-              <Field
-                label="Password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <div className="grid gap-1.5">
+                <Field
+                  label="Password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <Link
+                  href="/forgot-password"
+                  className="justify-self-end text-xs font-medium text-muted hover:text-accent hover:underline"
+                >
+                  Forgot your password?
+                </Link>
+              </div>
               <Button type="submit" loading={loading} className="mt-1 w-full">
                 Sign in
               </Button>
