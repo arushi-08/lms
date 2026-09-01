@@ -8,6 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
+import { reportAuthError } from "@/lib/auth-errors";
 import { createClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -37,9 +38,8 @@ export function LoginForm() {
     });
 
     if (signInError) {
-      // One message for every failure. Saying "no such account" would let
-      // anyone check which email addresses are registered here.
-      setError("That email and password do not match an account.");
+      // Generic message to the user, real reason to the dev console.
+      setError(reportAuthError("signIn", signInError));
       setLoading(false);
       return;
     }
