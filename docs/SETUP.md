@@ -20,15 +20,34 @@ provider and a local Postgres — but each item unblocks the next slice.
    `public.custom_access_token_hook`. Without this no JWT carries `user_role`, and every
    admin RLS policy silently evaluates to false. Nothing errors; admin features just quietly
    do not work.
-5. Sign up through the app, then promote yourself in the SQL editor:
+5. **Set the URL configuration.** Authentication → URL Configuration:
+   - Site URL: `http://localhost:3000` while developing, your real domain later.
+   - Redirect URLs: add `http://localhost:3000/**`, plus your deployed domain.
+
+   Skip this and confirmation and password-reset links redirect somewhere else —
+   usually straight back to the login page with no explanation, which reads as a
+   broken app rather than a missing setting.
+
+6. **Create your account.** Either sign up at `/signup` in the running app, or in
+   Authentication → Users → **Add user → Create new user**, with a password and
+   **Auto Confirm User** ticked.
+
+   Use *Create new user*, not *Send invitation*. An invitation sets no password at
+   all, so the account shows as confirmed while every sign-in attempt returns
+   `invalid_credentials` — which looks like a wrong password rather than a missing
+   one. If you have already hit that, Authentication → Users → the user → **Reset
+   password** fixes it, as does `/forgot-password` in the app.
+
+7. Promote yourself in the SQL editor:
    ```sql
    update public.profiles set role = 'admin' where email = 'you@example.com';
    ```
    Sign out and back in — the role only reaches your token on the next refresh.
-6. Auth settings worth changing from the defaults: require email confirmation, minimum
+
+8. Auth settings worth changing from the defaults: require email confirmation, minimum
    password length 10, enable the leaked-password check, turn on Turnstile captcha.
 
-7. **Verify from outside.** With the project reachable from your machine:
+9. **Verify from outside.** With the project reachable from your machine:
    ```bash
    export SUPABASE_URL=https://<ref>.supabase.co
    export SUPABASE_ANON_KEY=<anon key>
@@ -91,3 +110,27 @@ needs to become Pro ($20/mo) the day you charge.
 
 Not in the pilot. Payments are out of scope until the entity is approved (`PLAN.md` §1.G-IN).
 Worth starting the application now regardless, since approval is the long pole.
+
+---
+
+## Troubleshooting sign-in
+
+The login form shows one generic message for every failure, so it cannot be used to test
+which email addresses are registered. To see the real reason:
+
+```bash
+./scripts/check_auth.sh you@example.com 'your-password'
+```
+
+This calls Supabase directly, prints its actual error, and names the likely cause. On
+success it decodes the token and reports whether `user_role` is present — a missing
+access-token hook is silent everywhere else. In development the app also logs the real
+error to the browser console.
+
+| What you see | Usually means |
+|---|---|
+| `invalid_credentials` | No password was ever set — the account came from an invitation. See step 6. |
+| `Email not confirmed` | Confirm the address, or tick Auto Confirm User. |
+| `Email logins are disabled` | Authentication → Providers → Email is switched off. |
+| `Invalid API key` | The anon key belongs to a different project than the URL. |
+| Reset link lands on the login page | URL Configuration is unset. See step 5. |
