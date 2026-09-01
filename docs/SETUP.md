@@ -44,10 +44,23 @@ provider and a local Postgres — but each item unblocks the next slice.
    ```
    Sign out and back in — the role only reaches your token on the next refresh.
 
-8. Auth settings worth changing from the defaults: require email confirmation, minimum
+8. **Configure custom SMTP before you rely on any email.** Authentication →
+   Emails → SMTP Settings. Supabase's built-in sender allows only a couple of
+   messages an hour — it is a testing convenience, not a mail service, and the
+   limit is fixed until you point it at your own SMTP.
+
+   You will hit this during setup, not at launch: two reset attempts is enough,
+   and once exhausted every email route is closed for an hour, including the one
+   you need to get back in. Resend's free tier (3,000/month) takes about ten
+   minutes to wire up and the platform needs it regardless.
+
+   Until then, `scripts/set_password.py` sets a password through the Admin API
+   with no email involved.
+
+9. Auth settings worth changing from the defaults: require email confirmation, minimum
    password length 10, enable the leaked-password check, turn on Turnstile captcha.
 
-9. **Verify from outside.** With the project reachable from your machine:
+10. **Verify from outside.** With the project reachable from your machine:
    ```bash
    export SUPABASE_URL=https://<ref>.supabase.co
    export SUPABASE_ANON_KEY=<anon key>
@@ -127,6 +140,18 @@ success it decodes the token and reports whether `user_role` is present — a mi
 access-token hook is silent everywhere else. In development the app also logs the real
 error to the browser console.
 
+To get in without email at all — useful when the hourly email limit is spent:
+
+```bash
+export SUPABASE_URL=https://<ref>.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=<service role key>   # Project Settings > API
+python3 scripts/set_password.py you@example.com 'a-strong-password'
+```
+
+That key bypasses every RLS policy. Pass it for one command, keep it out of
+`.env.local` (which is compiled into the browser bundle), never commit it, and
+rotate it in the dashboard if it is ever exposed.
+
 | What you see | Usually means |
 |---|---|
 | `invalid_credentials` | No password was ever set — the account came from an invitation. See step 6. |
@@ -134,3 +159,5 @@ error to the browser console.
 | `Email logins are disabled` | Authentication → Providers → Email is switched off. |
 | `Invalid API key` | The anon key belongs to a different project than the URL. |
 | Reset link lands on the login page | URL Configuration is unset. See step 5. |
+| `rate limit exceeded` on a reset or signup | The built-in email sender allows about two messages an hour. Configure custom SMTP (step 8), or set the password with `scripts/set_password.py`, which sends nothing. |
+| Reset link worked once, now does not | Recovery links are single-use and expire after an hour. Request another — or avoid email entirely with `scripts/set_password.py`. |
