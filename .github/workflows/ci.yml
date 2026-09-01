@@ -93,6 +93,38 @@ jobs:
           REQUIRE_INTEGRATION_TESTS: '1'
         run: pytest -q
 
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx next lint --dir src || npx eslint src
+
+      - name: Build
+        # Placeholders only. src/lib/env.ts throws on a missing variable, which
+        # is the point -- a real deploy with unset config fails at build rather
+        # than rendering a site that breaks on first sign-in.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npx next build
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
