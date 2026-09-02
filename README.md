@@ -17,7 +17,7 @@ supabase/
   tests/        Supabase shim + adversarial RLS suite
 apps/
   api/          FastAPI backend
-  web/          Next.js frontend (not yet built)
+  web/          Next.js frontend
 ```
 
 ## Database
@@ -132,3 +132,35 @@ The service authenticates to Postgres with the service role, which **bypasses RL
 deliberate — this is the component trusted to write enrolment and progress — but it means a
 route that forgets its entitlement check is wide open. RLS is the backstop for the browser's
 own key, not for this service.
+
+## Admin
+
+`/admin` is gated three times over: middleware requires a session, the admin layout
+requires the admin role, and every `/api/admin/*` route re-reads `profiles.role` from the
+database. The last one is what actually protects the data — an admin claim in a token buys
+nothing on its own, and there is a test that forges one and still gets 403.
+
+Adding content needs no code changes: create a course, add modules and lessons, upload video,
+publish. Courses start as drafts and are invisible until published.
+
+### Authoring rules worth knowing
+
+| Rule | Why |
+|---|---|
+| A course cannot be published until it has a lesson | An empty course in the catalog is worse than no course |
+| Reordering must send the complete ordering | A partial list leaves duplicate or missing positions and produces an order nobody chose |
+| A course with enrolled students cannot be deleted | The cascade would take their progress and certificates too — unpublish instead |
+| Revoking an enrolment sets a status, never deletes | So a mistake stays undoable |
+| `PATCH` on a course cannot change `status` | Otherwise renaming a course could publish it |
+
+### Video
+
+The browser uploads straight to the provider; the file never passes through the API. With
+`VIDEO_PROVIDER=mock` the flow is identical to the real one — ticket, upload, poll for
+encoding — so the code exercised in development is the code that runs in production. The
+mock even fakes encoding latency, because "uploaded but not yet playable" is a real state
+the UI has to render.
+
+Reordering uses up/down buttons rather than drag-and-drop: they work with a keyboard, a
+screen reader and on a phone. Drag can be layered on later without touching the API, which
+takes the complete ordering either way.
