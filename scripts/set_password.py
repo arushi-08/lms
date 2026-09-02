@@ -22,6 +22,7 @@ Exit codes: 0 done, 1 the API refused, 2 could not run.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -29,6 +30,42 @@ import urllib.error
 import urllib.request
 
 TIMEOUT = 20
+
+
+def classify_key(key: str) -> tuple[bool, str]:
+    """Work out whether this is really a service role key, before using it.
+
+    Supabase shows several keys on the same settings page and they look alike.
+    Sending the wrong one produces a bare 403 "User not allowed", which says
+    nothing about which key was wrong or where the right one lives. Checking
+    here turns that into an answer.
+    """
+    if key.startswith("sb_secret_"):
+        return True, "secret key (new format)"
+    if key.startswith("sb_publishable_"):
+        return False, (
+            "that is the PUBLISHABLE key, which is the browser-safe one.\n"
+            "  You need the secret key: Project Settings > API Keys > Secret keys,\n"
+            "  then 'Reveal'. It starts with sb_secret_."
+        )
+    if key.count(".") == 2:
+        try:
+            part = key.split(".")[1]
+            part += "=" * (-len(part) % 4)
+            role = json.loads(base64.urlsafe_b64decode(part)).get("role")
+        except Exception:
+            return False, "this does not look like a Supabase key at all."
+        if role == "service_role":
+            return True, "service_role key (legacy JWT format)"
+        if role == "anon":
+            return False, (
+                "that is the ANON key -- the public one that ships in the browser.\n"
+                "  You need the service_role key from the same page, usually behind\n"
+                "  a 'Reveal' button, or the secret key if your project uses the\n"
+                "  newer sb_secret_ format."
+            )
+        return False, f"this key carries role '{role}', which is not service_role."
+    return False, "this does not look like a Supabase key at all."
 
 
 def api(url: str, key: str, path: str, *, method: str = "GET", body: dict | None = None):
@@ -64,8 +101,13 @@ def find_user(url: str, key: str, email: str) -> dict | None:
         status, payload = api(url, key, f"/auth/v1/admin/users?page={page}&per_page=200")
         if status == 0:
             raise SystemExit(f"could not reach the project: {payload.get('error')}")
-        if status == 401:
-            raise SystemExit("the key was rejected -- is that the service role key?")
+        if status in (401, 403):
+            raise SystemExit(
+                "the project rejected this key for admin use (HTTP "
+                f"{status}). It has the right shape but not the right privileges "
+                "-- check you copied the service role / secret key, not a "
+                "restricted or publishable one."
+            )
         if status >= 400:
             raise SystemExit(f"admin API returned HTTP {status}: {payload}")
 
@@ -98,6 +140,12 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+
+    ok, description = classify_key(key)
+    if not ok:
+        print(f"SUPABASE_SERVICE_ROLE_KEY is not a service role key: {description}", file=sys.stderr)
+        return 2
+    print(f"using {description}")
 
     user = find_user(url, key, email)
     if user is None:

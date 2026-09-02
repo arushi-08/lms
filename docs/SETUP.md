@@ -158,6 +158,7 @@ rotate it in the dashboard if it is ever exposed.
 | `Email not confirmed` | Confirm the address, or tick Auto Confirm User. |
 | `Email logins are disabled` | Authentication → Providers → Email is switched off. |
 | `Invalid API key` | The anon key belongs to a different project than the URL. |
+| `not_admin` / `User not allowed` from `set_password.py` | The exported key is the anon or publishable key, not the service role / secret key. They sit together on the API settings page; the admin one is usually behind a **Reveal** button. The script now names which key it was given. |
 | Reset link lands on the login page | URL Configuration is unset. See step 5. |
 | `rate limit exceeded` on a reset or signup | The built-in email sender allows about two messages an hour. Configure custom SMTP (step 8), or set the password with `scripts/set_password.py`, which sends nothing. |
 | Reset link worked once, now does not | Recovery links are single-use and expire after an hour. Request another — or avoid email entirely with `scripts/set_password.py`. |
