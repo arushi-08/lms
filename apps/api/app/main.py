@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from app.config import Settings, get_settings
 from app.db import build_database
 from app.providers.video.factory import build_video_provider
-from app.routers import health, progress, quizzes, video
+from app.routers import admin, health, progress, quizzes, video
 
 logger = logging.getLogger("lms")
 
@@ -83,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     prefix = settings.api_base_path
     app.include_router(health.router)
+    app.include_router(admin.router, prefix=prefix)
     app.include_router(video.router, prefix=prefix)
     app.include_router(progress.router, prefix=prefix)
     app.include_router(quizzes.router, prefix=prefix)
