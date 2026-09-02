@@ -4,13 +4,25 @@
 #   ./scripts/dev.sh
 #
 # The admin panel and the player both call the API, so the frontend alone is
-# not enough to use the app. Starting them separately means remembering two
-# setups; this remembers for you, and stops both together on Ctrl-C.
+# not enough to use the app. This starts both and stops both on Ctrl-C.
+#
+# Portability notes, since this has to work on macOS as well as Linux:
+#   * No setsid — it is util-linux only and absent on macOS.
+#   * `set -m` gives each background job its own process group, so one signal
+#     reaches uvicorn's reloader and next's child processes rather than
+#     orphaning them holding the ports.
+#   * No bash 4+ syntax: macOS still ships bash 3.2.
+#   * The venv's scripts live in bin/ on macOS and Linux, Scripts/ on Windows.
+#
+# Ports can be overridden: API_PORT=8001 WEB_PORT=3001 ./scripts/dev.sh
 set -euo pipefail
+set -m
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 API="$ROOT/apps/api"
 WEB="$ROOT/apps/web"
+API_PORT="${API_PORT:-8000}"
+WEB_PORT="${WEB_PORT:-3000}"
 
 fail() { printf '\n%s\n' "$1" >&2; exit 1; }
 
@@ -30,49 +42,79 @@ Project Settings > Database > Connection string > Transaction pooler (port 6543)
 
 Then fill in NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
 
-[ -d "$API/.venv" ] || fail \
-"apps/api/.venv is missing. Once:
+# Windows virtualenvs put executables in Scripts/ rather than bin/.
+if [ -x "$API/.venv/bin/uvicorn" ]; then
+  UVICORN="$API/.venv/bin/uvicorn"
+elif [ -x "$API/.venv/Scripts/uvicorn.exe" ]; then
+  UVICORN="$API/.venv/Scripts/uvicorn.exe"
+else
+  fail \
+"The API virtualenv is missing or incomplete. Once:
 
-  cd apps/api && uv venv .venv && . .venv/bin/activate && uv pip install -e '.[dev]'"
+  cd apps/api
+  uv venv .venv
+  . .venv/bin/activate        # .venv\\Scripts\\activate on Windows
+  uv pip install -e '.[dev]'"
+fi
 
 [ -d "$WEB/node_modules" ] || fail \
 "apps/web/node_modules is missing. Once:
 
   cd apps/web && npm install"
 
-pids=()
+API_PID=""
+WEB_PID=""
+
+stop_one() {
+  # Signal the whole process group where the shell gave the job its own
+  # (thanks to `set -m`), falling back to the single process where it did not
+  # — Git Bash on Windows being the case that needs the fallback.
+  pid="$1"
+  [ -n "$pid" ] || return 0
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   trap - INT TERM EXIT
-  # Kill the process groups: uvicorn --reload and next dev both fork children
-  # that outlive a plain kill on the parent and then hold the ports.
-  for pid in "${pids[@]:-}"; do
-    [ -n "$pid" ] && kill -- "-$pid" 2>/dev/null || true
-  done
+  echo ""
+  echo "==> stopping"
+  stop_one "$WEB_PID"
+  stop_one "$API_PID"
+  wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
 
-echo "==> API   http://localhost:8000   (docs at /docs)"
-setsid "$API/.venv/bin/uvicorn" app.main:app --reload --port 8000 \
-  --app-dir "$API" &
-pids+=($!)
+echo "==> API   http://localhost:$API_PORT   (docs at /docs)"
+# Subshell + exec so $! is the uvicorn process itself, and so the working
+# directory change does not leak into the web server started below.
+( cd "$API" && exec "$UVICORN" app.main:app --reload --port "$API_PORT" ) &
+API_PID=$!
 
 # Wait for the API before starting the web server, so the first page load does
 # not race it and show "Could not reach the API".
-for _ in $(seq 1 40); do
-  if curl -sS -o /dev/null -m 1 http://127.0.0.1:8000/healthz 2>/dev/null; then
-    echo "    API is up"
+api_up=""
+i=0
+while [ "$i" -lt 40 ]; do
+  if curl -sS -o /dev/null -m 1 "http://127.0.0.1:$API_PORT/healthz" 2>/dev/null; then
+    api_up="yes"
+    break
+  fi
+  # Has it already died? No point waiting out the full timeout.
+  if ! kill -0 "$API_PID" 2>/dev/null; then
     break
   fi
   sleep 0.5
+  i=$((i + 1))
 done
 
-if ! curl -sS -o /dev/null -m 2 http://127.0.0.1:8000/healthz 2>/dev/null; then
+if [ -n "$api_up" ]; then
+  echo "    API is up"
+else
   echo "    API did not start — see the output above" >&2
 fi
 
-echo "==> Web   http://localhost:3000"
-cd "$WEB"
-setsid npm run dev &
-pids+=($!)
+echo "==> Web   http://localhost:$WEB_PORT"
+( cd "$WEB" && exec npm run dev -- --port "$WEB_PORT" ) &
+WEB_PID=$!
 
 wait

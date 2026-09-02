@@ -113,7 +113,13 @@ direct connections and a restarting dev server will exhaust them. If your databa
 contains `@ : / ?` or `#`, percent-encode it or the URL will parse wrongly.
 
 `scripts/dev.sh` checks both `.env` files and both dependency trees exist before starting,
-and says exactly what is missing rather than failing halfway.
+and says exactly what is missing rather than failing halfway. Ports are overridable:
+`API_PORT=8001 WEB_PORT=3001 ./scripts/dev.sh`.
+
+It runs on macOS, Linux and Windows (Git Bash): no `setsid`, no bash 4+ syntax (macOS still
+ships bash 3.2), and it finds the virtualenv in `Scripts/` as well as `bin/`. If you would
+rather run the two halves in separate terminals, `uvicorn app.main:app --reload` from
+`apps/api` and `npm run dev` from `apps/web` do the same thing.
 
 ## API
 
