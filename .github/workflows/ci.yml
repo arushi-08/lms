@@ -117,6 +117,12 @@ jobs:
         # configs that eslint consumes directly.
         run: npx eslint src
 
+      - name: Content Security Policy
+        # A CSP that omits the API origin makes every browser-to-backend call
+        # fail as "Failed to fetch", with nothing in the server log to show for
+        # it. Cheap to assert, expensive to debug.
+        run: node scripts/check-csp.mjs
+
       - name: Build
         # Placeholders only. src/lib/env.ts throws on a missing variable, which
         # is the point -- a real deploy with unset config fails at build rather

@@ -199,3 +199,19 @@ the UI has to render.
 Reordering uses up/down buttons rather than drag-and-drop: they work with a keyboard, a
 screen reader and on a phone. Drag can be layered on later without touching the API, which
 takes the complete ordering either way.
+
+## Content Security Policy
+
+`apps/web/csp.mjs` builds the policy; `next.config.ts` serves it on every response.
+
+`connect-src` is generated from `NEXT_PUBLIC_API_URL`, because the browser calls the backend
+directly for playback grants, progress, quiz submission and every admin mutation. If that
+origin is missing the browser refuses those requests **before sending them** — nothing
+reaches the API log, and `fetch` reports only "Failed to fetch". It presents as a dead
+backend while the backend is perfectly healthy.
+
+`node apps/web/scripts/check-csp.mjs` asserts the policy still permits what the app needs,
+and runs in CI. Add a check there whenever the app starts talking to a new origin.
+
+Deploying to a domain? Set `NEXT_PUBLIC_API_URL` **at build time** — the header is baked
+during `next build`, not read per request.
