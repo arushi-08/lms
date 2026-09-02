@@ -33,13 +33,29 @@ export async function apiFetch<T>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
-  const response = await fetch(`${env.apiUrl}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-    cache: "no-store",
-  });
+  const url = `${env.apiUrl}${path}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+      cache: "no-store",
+    });
+  } catch {
+    // fetch rejects with a bare "Failed to fetch" for every transport-level
+    // problem — server down, wrong port, CORS refusal, DNS — and the browser
+    // deliberately hides which. Say what was attempted so the answer is one
+    // glance at the API console rather than a guess.
+    throw new ApiError(
+      0,
+      `Could not reach the API at ${url}. Check the backend is running, that ` +
+        `NEXT_PUBLIC_API_URL is right, and that CORS_ORIGINS on the API ` +
+        `includes ${typeof window === "undefined" ? "this origin" : window.location.origin}.`,
+    );
+  }
 
   if (!response.ok) {
     // Surface the API's own message when it sends one; never invent detail.

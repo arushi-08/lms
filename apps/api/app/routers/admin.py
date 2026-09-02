@@ -315,6 +315,7 @@ async def delete_lesson(lesson_id: UUID, admin: AdminDep, database: DatabaseDep)
 @router.post("/lessons/{lesson_id}/video/upload")
 async def create_video_upload(
     lesson_id: UUID,
+    request: Request,
     admin: AdminDep,
     database: DatabaseDep,
     provider: VideoProviderDep,
@@ -351,9 +352,18 @@ async def create_video_upload(
             diff={"video_id": ticket.video_id},
         )
 
+    # The mock provider names its own endpoint with a site-relative path,
+    # because it does not know this service's public URL. The browser would
+    # resolve that against the *frontend* origin and POST the file to Next,
+    # which has no such route. Absolutise it here, where the request knows.
+    # VdoCipher returns an absolute URL, which passes through untouched.
+    upload_url = ticket.upload_url
+    if upload_url.startswith("/"):
+        upload_url = str(request.base_url).rstrip("/") + upload_url
+
     return {
         "video_id": ticket.video_id,
-        "upload_url": ticket.upload_url,
+        "upload_url": upload_url,
         "upload_fields": ticket.upload_fields,
     }
 

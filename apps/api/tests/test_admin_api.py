@@ -297,6 +297,30 @@ class TestVideoUpload:
             "select video_status::text from lessons where id = $1", lesson_id
         ) == "processing"
 
+    async def test_upload_url_is_absolute(self, client, admin_auth) -> None:
+        """The browser must not resolve it against the frontend origin.
+
+        The mock provider names its endpoint with a site-relative path, since it
+        cannot know this service's public URL. Returned as-is, the browser would
+        POST the file to the Next server instead of the API, and the upload
+        would 404 with nothing obviously wrong in either log.
+        """
+        course_id = await new_course(client, admin_auth)
+        module = await client.post(
+            f"/api/admin/courses/{course_id}/modules", headers=admin_auth, json={"title": "M"}
+        )
+        lesson = await client.post(
+            f"/api/admin/modules/{module.json()['id']}/lessons",
+            headers=admin_auth,
+            json={"title": "Clip", "type": "video"},
+        )
+        response = await client.post(
+            f"/api/admin/lessons/{lesson.json()['id']}/video/upload", headers=admin_auth
+        )
+        url = response.json()["upload_url"]
+        assert url.startswith("http://") or url.startswith("https://"), url
+        assert url.endswith("/api/dev/video-upload")
+
     async def test_upload_refused_for_a_text_lesson(self, client, admin_auth) -> None:
         course_id = await new_course(client, admin_auth)
         module = await client.post(
