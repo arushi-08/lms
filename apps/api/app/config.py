@@ -10,10 +10,18 @@ configuration is worse than one that refuses to boot.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Anchored to this package, not the working directory. A relative ".env" is
+#: resolved against wherever the process happens to have been started, so the
+#: service would load no configuration at all when launched from the repo root
+#: -- and then fail with a confusing database error rather than a missing-config
+#: one, because empty settings still look valid.
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 Environment = Literal["development", "staging", "production"]
 VideoProviderName = Literal["mock", "vdocipher"]
@@ -22,7 +30,7 @@ PaymentProviderName = Literal["none", "stripe"]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         frozen=True,

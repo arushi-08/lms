@@ -88,15 +88,44 @@ These are enforced by tests, not by convention. Breaking one should fail CI.
 | An expired enrolment loses entitlement immediately | `has_active_enrollment()` + tests |
 | The audit log accepts no update or delete from any role | no grant + tests |
 
+## Running it
+
+Both halves are needed: the admin panel and the player call the API, so the frontend alone
+renders "Could not reach the API".
+
+```bash
+./scripts/dev.sh          # API on :8000, web on :3000, Ctrl-C stops both
+```
+
+First time only:
+
+```bash
+cd apps/api && uv venv .venv && . .venv/bin/activate && uv pip install -e '.[dev]'
+cp .env.example .env      # fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DATABASE_URL
+
+cd ../web && npm install
+cp .env.example .env.local # fill in NEXT_PUBLIC_SUPABASE_URL and _ANON_KEY
+```
+
+`DATABASE_URL` is Supabase → Project Settings → Database → Connection string →
+**Transaction pooler** (port 6543), not the direct connection. The free tier has very few
+direct connections and a restarting dev server will exhaust them. If your database password
+contains `@ : / ?` or `#`, percent-encode it or the URL will parse wrongly.
+
+`scripts/dev.sh` checks both `.env` files and both dependency trees exist before starting,
+and says exactly what is missing rather than failing halfway.
+
 ## API
 
 ```bash
 cd apps/api
 uv venv .venv && . .venv/bin/activate
 uv pip install -e ".[dev]"
-cp .env.example .env          # defaults run against the mock video provider
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload   # or use scripts/dev.sh to run both halves
 ```
+
+Settings resolve `.env` relative to `apps/api/`, not to the working directory, so the
+service loads the same configuration wherever it is started from.
 
 ### Tests
 
