@@ -53,7 +53,8 @@ def classify_key(key: str) -> tuple[bool, str]:
             part = key.split(".")[1]
             part += "=" * (-len(part) % 4)
             role = json.loads(base64.urlsafe_b64decode(part)).get("role")
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
+            # Bad base64, non-JSON payload, or a payload that is not an object.
             return False, "this does not look like a Supabase key at all."
         if role == "service_role":
             return True, "service_role key (legacy JWT format)"
