@@ -200,7 +200,7 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
                             {lesson.title}
                           </span>
                           <Badge>{lesson.type}</Badge>
-                          {lesson.is_preview ? <Badge tone="accent">preview</Badge> : null}
+                          {lesson.is_preview ? <Badge tone="accent">free preview</Badge> : null}
                           <div className="flex items-center gap-1">
                             <Button
                               variant="ghost"
@@ -245,7 +245,7 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
                                 )
                               }
                             >
-                              {lesson.is_preview ? "Unpreview" : "Preview"}
+                              {lesson.is_preview ? "Make paid" : "Make free preview"}
                             </Button>
                             <Button
                               variant="ghost"

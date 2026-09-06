@@ -43,5 +43,20 @@ for (const directive of ["frame-ancestors 'none'", "base-uri 'self'", "form-acti
   if (!csp.includes(directive)) fail(`the policy no longer sets ${directive}`);
 }
 
+// unsafe-eval belongs in development only. React needs it for dev tooling;
+// shipping it would weaken script-src for everyone.
+if (!buildCsp("http://localhost:8000", { dev: true }).includes("'unsafe-eval'")) {
+  fail("development builds need 'unsafe-eval' or React dev mode breaks");
+}
+if (buildCsp("https://api.example.com").includes("'unsafe-eval'")) {
+  fail("'unsafe-eval' must never reach a production build");
+}
+
+// The mock provider streams video from the API origin.
+const media = csp.split("; ").find((d) => d.startsWith("media-src"));
+if (!media.includes("http://localhost:8000")) {
+  fail("media-src must allow the API origin, or mock playback is blocked");
+}
+
 console.log(failed ? `\n${failed} CSP problem(s)` : "CSP checks passed");
 process.exit(failed ? 1 : 0);

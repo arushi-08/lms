@@ -99,10 +99,16 @@ async def create_playback_grant(
             user_agent=request.headers.get("user-agent"),
         )
 
+    # Same reason as the upload URL: a relative path would resolve against the
+    # frontend origin, where no such route exists.
+    direct_url = grant.direct_url
+    if direct_url and direct_url.startswith("/"):
+        direct_url = str(request.base_url).rstrip("/") + direct_url
+
     return PlaybackResponse(
         lesson_id=lesson_id,
         otp=grant.otp,
         playback_info=grant.playback_info,
         expires_at=grant.expires_at.isoformat(),
-        direct_url=grant.direct_url,
+        direct_url=direct_url,
     )

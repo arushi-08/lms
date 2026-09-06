@@ -21,14 +21,23 @@ export function apiOriginFrom(raw) {
   }
 }
 
-export function buildCsp(apiUrl) {
+export function buildCsp(apiUrl, { dev = false } = {}) {
   const api = apiOriginFrom(apiUrl);
+  // React's development build uses eval() for source mapping and callstack
+  // reconstruction. Production never does, so the allowance is scoped to dev
+  // rather than left on — 'unsafe-eval' in production would undo much of the
+  // point of having a script-src at all.
+  const scriptSrc = dev
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com"
+    : "script-src 'self' 'unsafe-inline' https://js.stripe.com";
   return [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://js.stripe.com",
+    scriptSrc,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    "media-src 'self' blob: https:",
+    // The API origin too: with the mock provider the <video> element streams
+    // the clip straight from the backend.
+    `media-src 'self' blob: ${api} https:`,
     "font-src 'self' data:",
     // The browser talks to the API directly for playback grants, progress,
     // quiz submission and every admin mutation.

@@ -8,7 +8,9 @@ const config: NextConfig = {
   async headers() {
     // Built from NEXT_PUBLIC_API_URL, so the policy follows wherever the API
     // is. See csp.mjs for why that matters.
-    const csp = buildCsp(process.env.NEXT_PUBLIC_API_URL);
+    const csp = buildCsp(process.env.NEXT_PUBLIC_API_URL, {
+      dev: process.env.NODE_ENV !== "production",
+    });
 
     return [
       {

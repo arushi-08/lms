@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { VideoPlayer } from "@/components/learn/video-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { adminFetch, type AdminLesson } from "@/lib/admin-client";
@@ -41,6 +42,7 @@ export function VideoUpload({
   );
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -139,6 +141,18 @@ export function VideoUpload({
       >
         {lesson.video_id ? "Replace video" : "Upload video"}
       </Button>
+
+      {lesson.video_status === "ready" ? (
+        <Button type="button" variant="ghost" size="sm" onClick={() => setPlaying((p) => !p)}>
+          {playing ? "Hide" : "Play"}
+        </Button>
+      ) : null}
+
+      {playing ? (
+        <div className="mt-2 w-full max-w-lg">
+          <VideoPlayer lessonId={lesson.id} />
+        </div>
+      ) : null}
 
       {error ? <span className="text-xs font-medium text-danger">{error}</span> : null}
     </div>

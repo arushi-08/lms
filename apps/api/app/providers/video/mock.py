@@ -32,11 +32,8 @@ FAKE_ENCODING_SECONDS = 8
 class MockVideoProvider:
     name = "mock"
 
-    def __init__(
-        self, *, otp_ttl_seconds: int = 300, sample_url: str = "/samples/sample.mp4"
-    ) -> None:
+    def __init__(self, *, otp_ttl_seconds: int = 300) -> None:
         self._ttl = otp_ttl_seconds
-        self._sample_url = sample_url
         self._created_at: dict[str, datetime] = {}
 
     async def create_upload(self, title: str) -> UploadTicket:
@@ -64,7 +61,9 @@ class MockVideoProvider:
             otp=otp,
             playback_info=f"mock-playback-info:{video_id}",
             expires_at=datetime.now(UTC) + timedelta(seconds=self._ttl),
-            direct_url=self._sample_url,
+            # Site-relative; the route absolutises it, since only the request
+            # knows this service's public URL.
+            direct_url=f"/api/dev/video/{video_id}",
         )
 
     async def get_status(self, video_id: str) -> str:

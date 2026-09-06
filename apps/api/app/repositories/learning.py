@@ -389,3 +389,43 @@ async def create_graded_attempt(
         ],
     )
     return attempt_id
+
+
+# ---------------------------------------------------------------- enrolment --
+
+@dataclass(frozen=True, slots=True)
+class EnrollableCourse:
+    course_id: UUID
+    slug: str
+    status: str
+    is_free: bool
+    access_type: str
+    access_days: int | None
+
+
+async def get_course_by_slug(conn: Conn, slug: str) -> EnrollableCourse | None:
+    row = await conn.fetchrow(
+        "select id as course_id, slug, status::text as status, is_free, "
+        "access_type::text as access_type, access_days from courses where slug = $1",
+        slug,
+    )
+    return EnrollableCourse(**dict(row)) if row else None
+
+
+async def self_enroll(
+    conn: Conn, *, user_id: UUID, course_id: UUID, expires_at: datetime | None
+) -> dict[str, Any]:
+    """Grant a free enrolment, reactivating a previous one rather than duplicating."""
+    row = await conn.fetchrow(
+        """
+        insert into enrollments (user_id, course_id, source, expires_at)
+        values ($1, $2, 'free', $3)
+        on conflict (user_id, course_id) do update
+          set status = 'active', expires_at = excluded.expires_at
+        returning id, status::text as status, expires_at
+        """,
+        user_id,
+        course_id,
+        expires_at,
+    )
+    return dict(row)
