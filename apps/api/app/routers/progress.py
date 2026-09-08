@@ -97,6 +97,8 @@ async def record_progress(
             required_completed=counts.required_completed,
             quizzes_total=counts.quizzes_total,
             quizzes_passed=counts.quizzes_passed,
+            graded_assignments_total=counts.graded_assignments_total,
+            graded_assignments_passed=counts.graded_assignments_passed,
         )
 
         await learning.update_enrollment_progress(

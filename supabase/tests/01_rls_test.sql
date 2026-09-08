@@ -88,6 +88,18 @@ insert into public.notifications (user_id, type, title) values
   ('11111111-1111-1111-1111-111111111111', 'welcome', 'Welcome Alice'),
   ('22222222-2222-2222-2222-222222222222', 'welcome', 'Welcome Bob');
 
+-- An assignment on the seeded course, with a submission from Alice only.
+insert into public.assignments (lesson_id, title, instructions)
+select l.id, 'Reflection', 'Write 200 words on what you practised.'
+from public.lessons l
+join public.modules m on m.id = l.module_id
+join public.courses c on c.id = m.course_id
+where c.slug = 'pilot-course' and l.slug = 'worked-example';
+
+insert into public.assignment_submissions (assignment_id, user_id, text_answer)
+select a.id, '11111111-1111-1111-1111-111111111111', 'My reflection.'
+from public.assignments a limit 1;
+
 -- Give the video lessons real content, so "cannot read it" means something.
 update public.lessons
 set video_id = 'vdo-secret-' || position, video_status = 'ready'
@@ -140,6 +152,10 @@ select tests.check('student with no attempts sees no quiz responses',
   tests.rowcount('select 1 from quiz_responses') = 0);
 select tests.check('student CANNOT see another student''s attempts',
   tests.rowcount('select 1 from quiz_attempts') = 0);
+select tests.check('non-enrolled student sees NO assignments',
+  tests.rowcount('select 1 from assignments') = 0);
+select tests.check('student CANNOT see another student''s submission',
+  tests.rowcount('select 1 from assignment_submissions') = 0);
 
 -- ------------------------------------------------- alice: signed in, enrolled --
 select tests.act_as('11111111-1111-1111-1111-111111111111', 'student');
@@ -160,6 +176,17 @@ select tests.check('student sees own quiz attempt',
   tests.rowcount('select 1 from quiz_attempts') = 1);
 select tests.check('student sees own quiz responses',
   tests.rowcount('select 1 from quiz_responses') = 1);
+select tests.check('enrolled student CAN see assignments',
+  tests.rowcount('select 1 from assignments') = 1);
+select tests.check('student sees own submission',
+  tests.rowcount('select 1 from assignment_submissions') = 1);
+select tests.check('student CANNOT grade their own submission',
+  tests.is_denied(
+    'update assignment_submissions set score = 100, passed = true, status = ''graded'''));
+select tests.check('student CANNOT submit by writing the table directly',
+  tests.is_denied(
+    'insert into assignment_submissions (assignment_id, user_id, text_answer) '
+    || 'select id, auth.uid(), ''forged'' from assignments limit 1'));
 select tests.check('student CAN mark own notification read',
   not tests.is_denied(
     'update notifications set read_at = now() where user_id = auth.uid()'));

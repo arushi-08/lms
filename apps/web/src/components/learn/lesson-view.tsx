@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { AssignmentView } from "@/components/learn/assignment-view";
+import { QuizRunner } from "@/components/learn/quiz-runner";
 import { VideoPlayer } from "@/components/learn/video-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
+import type { Assignment, Quiz } from "@/lib/api";
 
 type Lesson = {
   id: string;
@@ -22,10 +25,16 @@ export function LessonView({
   courseSlug,
   lessons,
   currentIndex,
+  quiz = null,
+  assignment = null,
+  assessmentError = null,
 }: {
   courseSlug: string;
   lessons: Lesson[];
   currentIndex: number;
+  quiz?: Quiz | null;
+  assignment?: Assignment | null;
+  assessmentError?: string | null;
 }) {
   const [percent, setPercent] = useState<number | null>(null);
   const lesson = lessons[currentIndex];
@@ -50,11 +59,26 @@ export function LessonView({
               lessonId={lesson.id}
               onProgress={(p) => setPercent(p)}
             />
+          ) : assessmentError ? (
+            <EmptyState title="This lesson could not be loaded" description={assessmentError} />
           ) : lesson.type === "quiz" ? (
-            <EmptyState
-              title="Quiz"
-              description="Quizzes are coming next. The grading behind them is already built and tested."
-            />
+            quiz ? (
+              <QuizRunner quiz={quiz} />
+            ) : (
+              <EmptyState
+                title="No quiz here yet"
+                description="An admin can add questions from the course editor."
+              />
+            )
+          ) : lesson.type === "assignment" ? (
+            assignment ? (
+              <AssignmentView assignment={assignment} />
+            ) : (
+              <EmptyState
+                title="No assignment here yet"
+                description="An admin can write the brief from the course editor."
+              />
+            )
           ) : (
             <EmptyState
               title="Written lesson"

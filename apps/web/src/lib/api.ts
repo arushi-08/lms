@@ -113,3 +113,44 @@ export type Quiz = {
   attempts_remaining: number | null;
   questions: QuizQuestion[];
 };
+
+export type AssignmentSubmission = {
+  id: string;
+  attempt_number: number;
+  text_answer: string | null;
+  link_url: string | null;
+  status: "submitted" | "graded" | "returned";
+  submitted_at: string;
+  is_late: boolean;
+  score: number | null;
+  passed: boolean | null;
+  feedback: string | null;
+  graded_at: string | null;
+};
+
+export type Assignment = {
+  assignment_id: string;
+  lesson_id: string;
+  title: string;
+  instructions: string;
+  max_points: number;
+  passing_score: number;
+  is_graded: boolean;
+  allow_text: boolean;
+  allow_link: boolean;
+  due_at: string | null;
+  allow_late: boolean;
+  submissions: AssignmentSubmission[];
+};
+
+export type AttemptResult = {
+  attempt_id: string;
+  attempt_number: number;
+  score: number;
+  passed: boolean;
+  points_earned: number;
+  points_possible: number;
+  results: { question_id: string; is_correct: boolean; points_awarded: number }[];
+  course_progress_percent: number;
+  course_completed: boolean;
+};

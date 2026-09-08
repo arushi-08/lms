@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { AssessmentEditor } from "@/components/admin/assessment-editor";
 import { VideoUpload } from "@/components/admin/video-upload";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -268,7 +269,19 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
 
                         {lesson.type === "video" ? (
                           <div className="mt-2 pl-6">
-                            <VideoUpload lesson={lesson} onChanged={() => startTransition(() => router.refresh())} />
+                            <VideoUpload
+                              lesson={lesson}
+                              onChanged={() => startTransition(() => router.refresh())}
+                            />
+                          </div>
+                        ) : null}
+                        {lesson.type === "quiz" || lesson.type === "assignment" ? (
+                          <div className="mt-2 pl-6">
+                            <AssessmentEditor
+                              lessonId={lesson.id}
+                              lessonType={lesson.type}
+                              onSaved={() => startTransition(() => router.refresh())}
+                            />
                           </div>
                         ) : null}
                       </li>
@@ -319,7 +332,7 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
 
 function AddLesson({ moduleId, onAdded }: { moduleId: string; onAdded: () => void }) {
   const [title, setTitle] = useState("");
-  const [type, setType] = useState<"video" | "text" | "quiz">("video");
+  const [type, setType] = useState<"video" | "text" | "quiz" | "assignment">("video");
   const [busy, setBusy] = useState(false);
 
   return (
@@ -357,6 +370,7 @@ function AddLesson({ moduleId, onAdded }: { moduleId: string; onAdded: () => voi
         <option value="video">Video</option>
         <option value="text">Text</option>
         <option value="quiz">Quiz</option>
+        <option value="assignment">Assignment</option>
       </select>
       <Button type="submit" variant="secondary" size="sm" loading={busy} disabled={!title.trim()}>
         Add lesson

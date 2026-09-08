@@ -52,12 +52,20 @@ export async function SiteHeader() {
             </Link>
           ) : null}
           {isAdmin ? (
-            <Link
-              href="/admin"
-              className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
-            >
-              Admin
-            </Link>
+            <>
+              <Link
+                href="/admin"
+                className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
+              >
+                Admin
+              </Link>
+              <Link
+                href="/admin/submissions"
+                className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
+              >
+                Marking
+              </Link>
+            </>
           ) : null}
         </nav>
 

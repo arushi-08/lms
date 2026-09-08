@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { LessonView } from "@/components/learn/lesson-view";
+import { apiGet } from "@/lib/api-server";
+import type { Assignment, Quiz } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +26,9 @@ export default async function LearnPage({
 
   const { data } = await supabase
     .from("courses")
-    .select("id,slug,title,modules(id,title,position,lessons(id,title,type,position,is_preview))")
+    .select(
+      "id,slug,title,modules(id,title,position,lessons(id,title,type,position,is_preview))",
+    )
     .eq("slug", slug)
     .maybeSingle();
 
@@ -42,6 +46,25 @@ export default async function LearnPage({
 
   const index = ordered.findIndex((l) => l.id === lessonId);
   if (index === -1) notFound();
+  const lesson = ordered[index]!;
+
+  // Assessment content comes from the API rather than straight from Supabase:
+  // the quiz payload has to be assembled with the answer key stripped, and the
+  // assignment payload carries this student's own submission history.
+  let quiz: Quiz | null = null;
+  let assignment: Assignment | null = null;
+  let assessmentError: string | null = null;
+
+  try {
+    if (lesson.type === "quiz") {
+      quiz = await apiGet<Quiz>(`/api/quizzes/by-lesson/${lessonId}`);
+    } else if (lesson.type === "assignment") {
+      assignment = await apiGet<Assignment>(`/api/lessons/${lessonId}/assignment`);
+    }
+  } catch (cause) {
+    assessmentError =
+      cause instanceof Error ? cause.message : "Could not load this lesson.";
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -55,6 +78,9 @@ export default async function LearnPage({
         courseSlug={course.slug}
         lessons={ordered}
         currentIndex={index}
+        quiz={quiz}
+        assignment={assignment}
+        assessmentError={assessmentError}
       />
     </div>
   );

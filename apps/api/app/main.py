@@ -13,7 +13,16 @@ from fastapi.responses import JSONResponse
 from app.config import Settings, get_settings
 from app.db import build_database
 from app.providers.video.factory import build_video_provider
-from app.routers import admin, dev, enrollments, health, progress, quizzes, video
+from app.routers import (
+    admin,
+    assignments,
+    dev,
+    enrollments,
+    health,
+    progress,
+    quizzes,
+    video,
+)
 
 logger = logging.getLogger("lms")
 
@@ -88,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Never reachable in production: Settings refuses to start there on the
         # mock provider at all.
         app.include_router(dev.router, prefix=prefix)
+    app.include_router(assignments.router, prefix=prefix)
     app.include_router(enrollments.router, prefix=prefix)
     app.include_router(video.router, prefix=prefix)
     app.include_router(progress.router, prefix=prefix)

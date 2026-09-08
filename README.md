@@ -215,3 +215,42 @@ and runs in CI. Add a check there whenever the app starts talking to a new origi
 
 Deploying to a domain? Set `NEXT_PUBLIC_API_URL` **at build time** — the header is baked
 during `next build`, not read per request.
+
+## Assessment
+
+Two kinds, deliberately different in who can mark them.
+
+**Quizzes** are auto-graded. Single choice, multiple choice, true/false and short text.
+Grading runs entirely on the server against the answer key, which the student payload cannot
+carry — `get_student_questions` does not select those columns, and RLS denies the browser's
+own credentials any access to them. Results report *which* questions were wrong and never
+what the right answer was: with unlimited retries, echoing the key back would let a student
+walk to a perfect score one submission at a time.
+
+Short-text marking normalises unicode, case and whitespace, so `"  The  Worked Example "`
+matches `"the worked example"`. It does not guess beyond that — list every accepted phrasing.
+
+**Assignments** are marked by hand. A student submits written work and optionally a link;
+an admin scores it and writes feedback at `/admin/submissions`. Pass/fail is derived from the
+score and the assignment's threshold rather than set by the grader, so the two cannot
+disagree — the certificate rule reads the verdict, not the number.
+
+Resubmission creates a new attempt instead of replacing the last one, so a student can still
+see the work a piece of feedback was written about.
+
+### What gates a certificate
+
+Every required lesson complete, every quiz passed, and every **graded** assignment passed.
+An assignment with `is_graded` off is practice — submitting is the point, and it will not
+hold a certificate hostage to marking.
+
+### Editing an answered question
+
+Refused. Rewriting a question students have already answered would silently change what
+their recorded responses mean. Add a new question instead.
+
+### Not built yet
+
+File upload on assignments. The column exists so adding it is not a migration of existing
+rows, but it needs Supabase Storage plus virus scanning and quota handling — a larger piece
+than it looks. Links cover the common case meanwhile.

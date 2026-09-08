@@ -185,6 +185,8 @@ class CourseCompletionCounts:
     required_completed: int
     quizzes_total: int
     quizzes_passed: int
+    graded_assignments_total: int
+    graded_assignments_passed: int
 
 
 _COMPLETION_COUNTS_SQL = """
@@ -196,6 +198,11 @@ with course_lessons as (
 ),
 course_quizzes as (
     select q.id from quizzes q where q.lesson_id in (select id from course_lessons)
+),
+course_assignments as (
+    -- Only graded assignments gate the certificate; ungraded ones are practice.
+    select a.id from assignments a
+    where a.lesson_id in (select id from course_lessons) and a.is_graded
 )
 select
     (select count(*) from course_lessons where is_required)                   as required_total,
@@ -205,7 +212,13 @@ select
     (select count(*) from course_quizzes)                                     as quizzes_total,
     (select count(distinct qa.quiz_id) from quiz_attempts qa
       where qa.user_id = $2 and qa.passed
-        and qa.quiz_id in (select id from course_quizzes))                    as quizzes_passed
+        and qa.quiz_id in (select id from course_quizzes))                    as quizzes_passed,
+    (select count(*) from course_assignments)
+        as graded_assignments_total,
+    (select count(distinct s.assignment_id) from assignment_submissions s
+      where s.user_id = $2 and s.passed
+        and s.assignment_id in (select id from course_assignments))
+        as graded_assignments_passed
 """
 
 

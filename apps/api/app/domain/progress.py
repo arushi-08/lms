@@ -184,15 +184,26 @@ def is_course_complete(
     required_completed: int,
     quizzes_total: int,
     quizzes_passed: int,
+    graded_assignments_total: int = 0,
+    graded_assignments_passed: int = 0,
 ) -> bool:
-    """The certificate rule: every required lesson done, every quiz passed.
+    """The certificate rule: every required lesson done, every quiz passed, and
+    every graded assignment marked as passed.
 
-    Confirmed decision 4. A course with no required lessons never completes, for
-    the same reason as above.
+    Confirmed decision 4, extended to assignments on the same principle. Only
+    assignments flagged ``is_graded`` count -- a reflective exercise where
+    submitting is the point should not hold a certificate hostage to marking.
+
+    A course with no required lessons never completes, for the same reason as
+    above: an empty course is not an achievement.
     """
     if required_total <= 0:
         return False
-    return required_completed >= required_total and quizzes_passed >= quizzes_total
+    return (
+        required_completed >= required_total
+        and quizzes_passed >= quizzes_total
+        and graded_assignments_passed >= graded_assignments_total
+    )
 
 
 def resolve_expiry(

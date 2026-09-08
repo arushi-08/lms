@@ -12,11 +12,12 @@ request failed halfway.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.providers.video.base import VideoProviderError
 from app.repositories import admin as repo
@@ -59,7 +60,7 @@ class CreateModule(BaseModel):
 
 class CreateLesson(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    type: Literal["video", "text", "quiz"] = "video"
+    type: Literal["video", "text", "quiz", "assignment"] = "video"
 
 
 class UpdateLesson(BaseModel):
@@ -79,6 +80,54 @@ class Reorder(BaseModel):
 class GrantEnrollment(BaseModel):
     user_id: UUID
     course_id: UUID
+
+
+class QuizSettings(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    passing_score: int = Field(default=70, ge=1, le=100)
+
+
+class QuizOption(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    is_correct: bool = False
+
+
+class QuestionInput(BaseModel):
+    id: UUID | None = None
+    type: Literal["single", "multi", "boolean", "short_text"]
+    prompt: str = Field(min_length=1, max_length=2000)
+    explanation: str | None = Field(default=None, max_length=2000)
+    points: int = Field(default=1, ge=1, le=100)
+    correct_answers: list[str] | None = None
+    options: list[QuizOption] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> QuestionInput:
+        # Caught here rather than at the database, so the author sees which
+        # question is wrong instead of a constraint name.
+        if self.type == "short_text":
+            if not self.correct_answers:
+                raise ValueError("a short-text question needs at least one accepted answer")
+            return self
+        if len(self.options) < 2:
+            raise ValueError("a choice question needs at least two options")
+        if not any(option.is_correct for option in self.options):
+            raise ValueError("mark at least one option correct")
+        if self.type in {"single", "boolean"} and sum(o.is_correct for o in self.options) != 1:
+            raise ValueError("a single-answer question needs exactly one correct option")
+        return self
+
+
+class AssignmentInput(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    instructions: str | None = Field(default=None, max_length=20_000)
+    max_points: int | None = Field(default=None, ge=1, le=1000)
+    passing_score: int | None = Field(default=None, ge=1, le=100)
+    is_graded: bool | None = None
+    allow_text: bool | None = None
+    allow_link: bool | None = None
+    due_at: datetime | None = None
+    allow_late: bool | None = None
 
 
 # ----------------------------------------------------------------- courses --
@@ -453,3 +502,108 @@ async def revoke_enrollment(
             entity_id=str(enrollment_id),
             ip=client_ip(request),
         )
+
+
+# --------------------------------------------------------- quiz authoring --
+
+@router.put("/lessons/{lesson_id}/quiz")
+async def upsert_quiz(
+    lesson_id: UUID, payload: QuizSettings, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    async with database.transaction() as conn:
+        quiz = await repo.upsert_quiz(
+            conn, lesson_id, title=payload.title, passing_score=payload.passing_score
+        )
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="quiz.upsert",
+            entity_type="quiz",
+            entity_id=str(quiz["id"]),
+        )
+    return {**quiz, "id": str(quiz["id"])}
+
+
+@router.get("/lessons/{lesson_id}/quiz")
+async def get_quiz_for_editing(
+    lesson_id: UUID, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    """Returns the answer key. Admin only, by construction and by route."""
+    async with database.acquire() as conn:
+        quiz = await repo.get_quiz_for_editing(conn, lesson_id)
+    if quiz is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no quiz yet")
+    return quiz
+
+
+@router.put("/quizzes/{quiz_id}/questions")
+async def save_question(
+    quiz_id: UUID, payload: QuestionInput, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    async with database.transaction() as conn:
+        if payload.id is not None and await repo.question_has_responses(conn, payload.id):
+            # Editing a question students have already answered would silently
+            # rewrite the meaning of their recorded responses.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="this question has already been answered; add a new one instead",
+            )
+        question_id = await repo.replace_question(
+            conn,
+            quiz_id=quiz_id,
+            question_id=payload.id,
+            question_type=payload.type,
+            prompt=payload.prompt,
+            explanation=payload.explanation,
+            points=payload.points,
+            correct_answers=payload.correct_answers,
+            options=[option.model_dump() for option in payload.options],
+        )
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="quiz.question.save",
+            entity_type="quiz_question",
+            entity_id=str(question_id),
+        )
+    return {"id": str(question_id)}
+
+
+@router.delete("/questions/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_question(
+    question_id: UUID, admin: AdminDep, database: DatabaseDep
+) -> None:
+    async with database.transaction() as conn:
+        if await repo.question_has_responses(conn, question_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="this question has already been answered and cannot be deleted",
+            )
+        await repo.delete_question(conn, question_id)
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="quiz.question.delete",
+            entity_type="quiz_question",
+            entity_id=str(question_id),
+        )
+
+
+# --------------------------------------------------- assignment authoring --
+
+@router.put("/lessons/{lesson_id}/assignment")
+async def upsert_assignment(
+    lesson_id: UUID, payload: AssignmentInput, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    async with database.transaction() as conn:
+        assignment = await repo.upsert_assignment(
+            conn, lesson_id, payload.model_dump(exclude_unset=True)
+        )
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="assignment.upsert",
+            entity_type="assignment",
+            entity_id=str(assignment["id"]),
+        )
+    return {**assignment, "id": str(assignment["id"]), "lesson_id": str(assignment["lesson_id"])}

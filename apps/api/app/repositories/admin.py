@@ -419,3 +419,203 @@ async def revoke_enrollment(conn: Conn, enrollment_id: UUID) -> None:
     await conn.execute(
         "update enrollments set status = 'refunded' where id = $1", enrollment_id
     )
+
+
+# ------------------------------------------------------- quizzes (authoring) --
+
+async def upsert_quiz(
+    conn: Conn, lesson_id: UUID, *, title: str, passing_score: int
+) -> dict[str, Any]:
+    row = await conn.fetchrow(
+        """
+        insert into quizzes (lesson_id, title, passing_score)
+        values ($1, $2, $3)
+        on conflict (lesson_id) do update
+          set title = excluded.title, passing_score = excluded.passing_score
+        returning id, lesson_id, title, passing_score
+        """,
+        lesson_id,
+        title,
+        passing_score,
+    )
+    return dict(row)
+
+
+async def get_quiz_for_editing(conn: Conn, lesson_id: UUID) -> dict[str, Any] | None:
+    """The full quiz *including* the answer key. Admin routes only.
+
+    Deliberately a separate function from the student read path, so the two can
+    never be confused at a call site: this one is only ever reachable behind
+    require_admin.
+    """
+    quiz = await conn.fetchrow(
+        "select id, lesson_id, title, passing_score, max_attempts from quizzes "
+        "where lesson_id = $1",
+        lesson_id,
+    )
+    if quiz is None:
+        return None
+
+    questions = await conn.fetch(
+        """
+        select qq.id, qq.type::text as type, qq.prompt, qq.explanation, qq.points,
+               qq.position, qq.correct_answers,
+               coalesce(
+                   jsonb_agg(
+                       jsonb_build_object('id', qo.id, 'text', qo.text,
+                                          'is_correct', qo.is_correct)
+                       order by qo.position
+                   ) filter (where qo.id is not null), '[]'::jsonb
+               ) as options
+        from quiz_questions qq
+        left join quiz_options qo on qo.question_id = qq.id
+        where qq.quiz_id = $1
+        group by qq.id
+        order by qq.position
+        """,
+        quiz["id"],
+    )
+    return {
+        **dict(quiz),
+        "questions": [
+            {**dict(q), "options": json.loads(q["options"])} for q in questions
+        ],
+    }
+
+
+async def replace_question(
+    conn: Conn,
+    *,
+    quiz_id: UUID,
+    question_id: UUID | None,
+    question_type: str,
+    prompt: str,
+    explanation: str | None,
+    points: int,
+    correct_answers: list[str] | None,
+    options: list[dict[str, Any]],
+) -> UUID:
+    """Create or rewrite one question and its options.
+
+    Options are replaced wholesale rather than diffed. Diffing them would need
+    stable client-side ids and gets the ordering wrong in edge cases; replacing
+    is simple and correct, and a quiz has a handful of options per question.
+    Existing responses reference option ids, which is why editing a question
+    that has already been answered is refused above this layer.
+    """
+    if question_id is None:
+        position = (
+            await conn.fetchval(
+                "select coalesce(max(position), 0) + 1 from quiz_questions where quiz_id = $1",
+                quiz_id,
+            )
+            or 1
+        )
+        question_id = await conn.fetchval(
+            """
+            insert into quiz_questions
+                (quiz_id, type, prompt, explanation, points, position, correct_answers)
+            values ($1, $2::question_type, $3, $4, $5, $6, $7)
+            returning id
+            """,
+            quiz_id,
+            question_type,
+            prompt,
+            explanation,
+            points,
+            position,
+            correct_answers,
+        )
+    else:
+        await conn.execute(
+            """
+            update quiz_questions
+               set type = $2::question_type, prompt = $3, explanation = $4,
+                   points = $5, correct_answers = $6
+             where id = $1 and quiz_id = $7
+            """,
+            question_id,
+            question_type,
+            prompt,
+            explanation,
+            points,
+            correct_answers,
+            quiz_id,
+        )
+        await conn.execute("delete from quiz_options where question_id = $1", question_id)
+
+    for index, option in enumerate(options, start=1):
+        await conn.execute(
+            "insert into quiz_options (question_id, text, is_correct, position) "
+            "values ($1, $2, $3, $4)",
+            question_id,
+            option["text"],
+            bool(option.get("is_correct")),
+            index,
+        )
+    return question_id  # type: ignore[return-value]
+
+
+async def question_has_responses(conn: Conn, question_id: UUID) -> bool:
+    return bool(
+        await conn.fetchval(
+            "select 1 from quiz_responses where question_id = $1 limit 1", question_id
+        )
+    )
+
+
+async def delete_question(conn: Conn, question_id: UUID) -> None:
+    await conn.execute("delete from quiz_questions where id = $1", question_id)
+
+
+# --------------------------------------------------- assignments (authoring) --
+
+ASSIGNMENT_FIELDS = {
+    "title", "instructions", "max_points", "passing_score", "is_graded",
+    "allow_text", "allow_link", "due_at", "allow_late",
+}
+
+
+async def upsert_assignment(
+    conn: Conn, lesson_id: UUID, changes: dict[str, Any]
+) -> dict[str, Any]:
+    fields = {k: v for k, v in changes.items() if k in ASSIGNMENT_FIELDS}
+    existing = await conn.fetchval(
+        "select id from assignments where lesson_id = $1", lesson_id
+    )
+
+    if existing is None:
+        row = await conn.fetchrow(
+            """
+            insert into assignments (lesson_id, title, instructions, max_points,
+                                     passing_score, is_graded, allow_text, allow_link,
+                                     due_at, allow_late)
+            values ($1, $2, $3, coalesce($4, 100), coalesce($5, 70), coalesce($6, true),
+                    coalesce($7, true), coalesce($8, false), $9, coalesce($10, true))
+            returning id, lesson_id, title, instructions, max_points, passing_score
+            """,
+            lesson_id,
+            fields.get("title") or "Assignment",
+            fields.get("instructions") or "",
+            fields.get("max_points"),
+            fields.get("passing_score"),
+            fields.get("is_graded"),
+            fields.get("allow_text"),
+            fields.get("allow_link"),
+            fields.get("due_at"),
+            fields.get("allow_late"),
+        )
+        return dict(row)
+
+    if not fields:
+        row = await conn.fetchrow("select * from assignments where id = $1", existing)
+        return dict(row)
+
+    assignments = ", ".join(f"{name} = ${i + 2}" for i, name in enumerate(fields))
+    row = await conn.fetchrow(
+        f"update assignments set {assignments} where id = $1 "
+        "returning id, lesson_id, title, instructions, max_points, passing_score",
+        existing,
+        *fields.values(),
+    )
+    return dict(row)

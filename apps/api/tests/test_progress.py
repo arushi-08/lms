@@ -245,3 +245,43 @@ class TestExpiryResolution:
     def test_time_limited_without_days_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="access_days"):
             resolve_expiry(access_type="time_limited", access_days=None, enrolled_at=T0)
+
+
+class TestAssignmentsInCompletion:
+    def test_ungraded_assignment_does_not_block_the_certificate(self) -> None:
+        # A reflective exercise where submitting is the point should not hold a
+        # certificate hostage to marking.
+        assert is_course_complete(
+            required_total=2,
+            required_completed=2,
+            quizzes_total=0,
+            quizzes_passed=0,
+            graded_assignments_total=0,
+            graded_assignments_passed=0,
+        )
+
+    def test_unmarked_graded_assignment_blocks_it(self) -> None:
+        assert not is_course_complete(
+            required_total=2,
+            required_completed=2,
+            quizzes_total=0,
+            quizzes_passed=0,
+            graded_assignments_total=1,
+            graded_assignments_passed=0,
+        )
+
+    def test_passing_every_graded_assignment_completes_it(self) -> None:
+        assert is_course_complete(
+            required_total=2,
+            required_completed=2,
+            quizzes_total=1,
+            quizzes_passed=1,
+            graded_assignments_total=2,
+            graded_assignments_passed=2,
+        )
+
+    def test_assignments_default_to_absent(self) -> None:
+        # Callers written before assignments existed keep working.
+        assert is_course_complete(
+            required_total=1, required_completed=1, quizzes_total=0, quizzes_passed=0
+        )

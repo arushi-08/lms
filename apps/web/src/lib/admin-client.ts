@@ -41,7 +41,7 @@ export type AdminLesson = {
   module_id: string;
   title: string;
   slug: string;
-  type: "video" | "text" | "quiz";
+  type: "video" | "text" | "quiz" | "assignment";
   position: number;
   is_preview: boolean;
   is_required: boolean;

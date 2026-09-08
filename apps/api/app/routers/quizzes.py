@@ -73,6 +73,24 @@ async def _load_quiz_for_user(conn: Any, quiz_id: UUID, user: Any) -> learning.Q
     return meta
 
 
+@router.get("/by-lesson/{lesson_id}", response_model=QuizView)
+async def get_quiz_by_lesson(
+    lesson_id: UUID, user: CurrentUserDep, database: DatabaseDep
+) -> QuizView:
+    """Same payload as by-id, keyed by the lesson the student is looking at.
+
+    The player knows the lesson, not the quiz; without this the frontend would
+    have to discover the quiz id some other way.
+    """
+    async with database.acquire() as conn:
+        quiz_id = await conn.fetchval(
+            "select id from quizzes where lesson_id = $1", lesson_id
+        )
+    if quiz_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no quiz here")
+    return await get_quiz(quiz_id, user, database)
+
+
 @router.get("/{quiz_id}", response_model=QuizView)
 async def get_quiz(quiz_id: UUID, user: CurrentUserDep, database: DatabaseDep) -> QuizView:
     async with database.acquire() as conn:
@@ -155,6 +173,8 @@ async def submit_attempt(
             required_completed=counts.required_completed,
             quizzes_total=counts.quizzes_total,
             quizzes_passed=counts.quizzes_passed,
+            graded_assignments_total=counts.graded_assignments_total,
+            graded_assignments_passed=counts.graded_assignments_passed,
         )
 
         context = await learning.get_lesson_context(conn, meta.lesson_id, user.user_id)
