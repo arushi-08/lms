@@ -212,9 +212,9 @@ def resolve_expiry(
     access_days: int | None,
     enrolled_at: datetime,
 ) -> datetime | None:
-    """Turn a course's access policy into a concrete instant for the enrolment.
+    """Turn a course's access policy into a concrete instant for the enrollment.
 
-    Resolved once, at enrolment, and stored -- so editing the course's policy
+    Resolved once, at enrollment, and stored -- so editing the course's policy
     afterwards cannot retroactively shorten access somebody already has.
     """
     if access_type == "lifetime":

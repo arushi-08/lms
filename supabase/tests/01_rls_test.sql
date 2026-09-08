@@ -3,7 +3,7 @@
 -- Every check here is phrased as an attack a signed-in student could actually
 -- attempt with the public anon key and their own JWT -- reading the answer key,
 -- reading another student's records, promoting themselves to admin, granting
--- themselves an enrolment. A policy nobody has tried to break is a guess.
+-- themselves an enrollment. A policy nobody has tried to break is a guess.
 --
 -- Run: psql -v ON_ERROR_STOP=1 -f 00_shim_supabase.sql -f <migrations> -f 01_rls_test.sql
 
@@ -160,7 +160,7 @@ select tests.check('student CANNOT see another student''s submission',
 -- ------------------------------------------------- alice: signed in, enrolled --
 select tests.act_as('11111111-1111-1111-1111-111111111111', 'student');
 
-select tests.check('enrolled student sees own enrolment',
+select tests.check('enrolled student sees own enrollment',
   tests.rowcount('select 1 from enrollments') = 1);
 select tests.check('enrolled student CAN see quizzes',
   tests.rowcount('select 1 from quizzes') = 1);
@@ -204,7 +204,7 @@ select tests.check('student CANNOT promote self to admin',
   tests.is_denied('update profiles set role = ''admin'' where id = auth.uid()'));
 select tests.check('student CAN edit own display name',
   not tests.is_denied('update profiles set full_name = ''Renamed'' where id = auth.uid()'));
-select tests.check('student CANNOT grant self an enrolment',
+select tests.check('student CANNOT grant self an enrollment',
   tests.is_denied(
     'insert into enrollments (user_id, course_id, source) '
     || 'select auth.uid(), id, ''free'' from courses where slug = ''secret-draft'''));
@@ -235,9 +235,9 @@ where user_id = '11111111-1111-1111-1111-111111111111';
 
 set role authenticated;
 select tests.act_as('11111111-1111-1111-1111-111111111111', 'student');
-select tests.check('expired enrolment loses entitlement',
+select tests.check('expired enrollment loses entitlement',
   (select not public.has_active_enrollment(id) from courses where slug = 'pilot-course'));
-select tests.check('expired enrolment loses quiz access',
+select tests.check('expired enrollment loses quiz access',
   tests.rowcount('select 1 from quizzes') = 0);
 
 reset role;
@@ -252,7 +252,7 @@ select tests.check('admin sees all profiles',
   tests.rowcount('select 1 from profiles') = 3);
 select tests.check('admin sees draft courses',
   tests.rowcount('select 1 from courses where slug = ''secret-draft''') = 1);
-select tests.check('admin sees all enrolments',
+select tests.check('admin sees all enrollments',
   tests.rowcount('select 1 from enrollments') = 1);
 -- Even an admin JWT does not unlock the answer key over PostgREST: admin tools
 -- go through the API, which uses service_role. One enforcement path, not two.

@@ -106,7 +106,7 @@ def database_url() -> Iterator[str]:
     for migration in sorted((SUPABASE_DIR / "migrations").glob("*.sql")):
         _psql(PG_DB, file=migration)
 
-    # Users, an enrolment for Alice, a draft course, and playable videos.
+    # Users, an enrollment for Alice, a draft course, and playable videos.
     _psql(
         PG_DB,
         sql=f"""

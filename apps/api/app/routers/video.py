@@ -4,7 +4,7 @@ This is the route the "no student downloads" requirement rests on. The sequence
 is fixed and every step matters:
 
 1. Authenticate the caller.
-2. Check entitlement against the database -- enrolment active, not expired, or
+2. Check entitlement against the database -- enrollment active, not expired, or
    the lesson is a free preview.
 3. Check the concurrent-session cap, so one shared login cannot serve a class.
 4. Only then ask the provider for a short-lived, watermarked OTP.

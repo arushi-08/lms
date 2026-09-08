@@ -38,7 +38,7 @@ class VideoProvider(Protocol):
 ```
 
 - `MockVideoProvider` — serves a local sample file, fakes the OTP handshake and encoding
-  delay, and **still runs the full enrolment/entitlement check** before granting playback.
+  delay, and **still runs the full enrollment/entitlement check** before granting playback.
   Selected by `VIDEO_PROVIDER=mock`. This means the access-control logic — the part that
   actually matters — is written, tested and reviewable now.
 - `VdoCipherProvider` — real OTP + watermark + DRM. Selected by `VIDEO_PROVIDER=vdocipher`.
@@ -62,8 +62,8 @@ clamping · quizzes with auto-grading · certificates with public verification �
 dashboard · design system · automated backups · CI.
 
 ### Out (deferred, not forgotten)
-- **Payments.** Stripe isn't approved and the price isn't set. The pilot enrols students via
-  free enrolment and admin grant. The `PaymentProvider` interface and the `payments` /
+- **Payments.** Stripe isn't approved and the price isn't set. The pilot enrolls students via
+  free enrollment and admin grant. The `PaymentProvider` interface and the `payments` /
   `stripe_events` tables ship anyway, so Phase 5 is an adapter plus a webhook route.
 - Notifications beyond Supabase's own auth emails (verify, reset). No Resend account needed
   for the pilot; the send interface is stubbed the same way.

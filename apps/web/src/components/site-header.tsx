@@ -63,7 +63,7 @@ export async function SiteHeader() {
                 href="/admin/submissions"
                 className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
               >
-                Marking
+                Grading
               </Link>
             </>
           ) : null}

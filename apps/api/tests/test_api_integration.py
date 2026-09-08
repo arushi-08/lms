@@ -64,7 +64,7 @@ async def lesson_id(conn: asyncpg.Connection, slug: str) -> UUID:
 
 @pytest.fixture(autouse=True)
 async def reset_state(conn: asyncpg.Connection) -> AsyncIterator[None]:
-    """Each test starts from the same enrolment and playback state."""
+    """Each test starts from the same enrollment and playback state."""
     yield
     await conn.execute("delete from video_playback_sessions")
     await conn.execute("delete from quiz_responses")
@@ -237,7 +237,7 @@ class TestProgress:
             json={"watched_seconds": 10, "position_seconds": 10},
         )
         # Preview lessons are watchable without enrolling, but progress hangs
-        # off an enrolment, so there is nothing to record against.
+        # off an enrollment, so there is nothing to record against.
         assert response.status_code == 403
 
     async def test_course_percentage_tracks_completed_lessons(

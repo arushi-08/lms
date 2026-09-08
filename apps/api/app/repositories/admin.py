@@ -1,4 +1,4 @@
-"""SQL for the admin surface: authoring, ordering, enrolment, audit.
+"""SQL for the admin surface: authoring, ordering, enrollment, audit.
 
 Everything here runs with the service role, so the router's require_admin
 dependency is the only thing standing between these functions and the public.

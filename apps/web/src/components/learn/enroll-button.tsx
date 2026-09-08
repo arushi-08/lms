@@ -24,7 +24,7 @@ export function EnrollButton({
   if (!signedIn) {
     return (
       <Link href={`/login?next=/courses/${slug}`}>
-        <Button size="lg">Sign in to enrol</Button>
+        <Button size="lg">Sign in to enroll</Button>
       </Link>
     );
   }
@@ -34,7 +34,7 @@ export function EnrollButton({
     // rather than showing a button that cannot work.
     return (
       <Alert tone="info">
-        Paid enrolment is not available yet. Ask for access and it can be granted
+        Paid enrollment is not available yet. Ask for access and it can be granted
         directly.
       </Alert>
     );
@@ -57,13 +57,13 @@ export function EnrollButton({
               });
               router.refresh();
             } catch (cause) {
-              setError(cause instanceof Error ? cause.message : "Could not enrol.");
+              setError(cause instanceof Error ? cause.message : "Could not enroll.");
             } finally {
               setBusy(false);
             }
           }}
         >
-          Enrol for free
+          Enroll for free
         </Button>
       </div>
     </div>

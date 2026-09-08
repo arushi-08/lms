@@ -55,7 +55,7 @@ async def record_progress(
             # Admins previewing a course they are not enrolled in have nowhere
             # to hang progress, and should not accumulate any.
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="no enrolment to record against"
+                status_code=status.HTTP_409_CONFLICT, detail="no enrollment to record against"
             )
 
         stored = await learning.get_progress(conn, user.user_id, lesson_id)

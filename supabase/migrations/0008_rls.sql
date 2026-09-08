@@ -104,7 +104,7 @@ create policy lessons_read_admin on public.lessons
   for select to authenticated using (public.is_admin());
 
 -- ------------------------------------------------------------- enrollments --
--- Read-only to the owner. Every write goes through the API, because enrolment
+-- Read-only to the owner. Every write goes through the API, because enrollment
 -- is an entitlement grant and students do not get to grant themselves those.
 grant select on public.enrollments to authenticated;
 

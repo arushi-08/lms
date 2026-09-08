@@ -174,7 +174,7 @@ def isolation_checks(probe: Probe) -> list[Result]:
     rows = json.loads(body) if status == 200 and body.strip().startswith("[") else None
     results.append(
         Result(
-            "anon cannot list enrolments",
+            "anon cannot list enrollments",
             not (status == 200 and rows),
             "EXPOSED -- who bought what is world-readable"
             if (status == 200 and rows)

@@ -1,4 +1,4 @@
-"""Student self-enrolment.
+"""Student self-enrollment.
 
 Only free courses. A paid course is entered through the payment provider's
 webhook, never through a request the browser can make — otherwise the price is

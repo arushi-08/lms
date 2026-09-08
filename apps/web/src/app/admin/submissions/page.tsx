@@ -3,7 +3,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { apiGet } from "@/lib/api-server";
 import type { QueuedSubmission } from "@/components/admin/grading-queue";
 
-export const metadata = { title: "Marking · Admin" };
+export const metadata = { title: "Grading · Admin" };
 export const dynamic = "force-dynamic";
 
 export default async function SubmissionsPage() {
@@ -18,7 +18,7 @@ export default async function SubmissionsPage() {
   if (error) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-text">Marking</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-text">Grading</h1>
         <div className="mt-8">
           <EmptyState title="Could not reach the API" description={error} />
         </div>

@@ -32,7 +32,7 @@ export type QueuedSubmission = {
 };
 
 /**
- * The marking queue.
+ * The grading queue.
  *
  * Pass/fail is not a field here: the server derives it from the score and the
  * assignment's threshold. A grader who could set them independently could
@@ -47,12 +47,12 @@ export function GradingQueue({ initial }: { initial: QueuedSubmission[] }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
       <h1 className="text-2xl font-semibold tracking-tight text-text sm:text-3xl">
-        Marking
+        Grading
       </h1>
       <p className="mt-1.5 text-sm text-muted">
         {initial.length === 0
           ? "Nothing waiting."
-          : `${initial.length} submission${initial.length === 1 ? "" : "s"} awaiting marking.`}
+          : `${initial.length} submission${initial.length === 1 ? "" : "s"} awaiting grading.`}
       </p>
 
       {error ? (
@@ -64,8 +64,8 @@ export function GradingQueue({ initial }: { initial: QueuedSubmission[] }) {
       <div className="mt-8 grid gap-4">
         {initial.length === 0 ? (
           <EmptyState
-            title="No submissions to mark"
-            description="When a student submits an assignment it appears here."
+            title="Nothing to grade"
+            description="Submitted assignments appear here for grading."
           />
         ) : (
           initial.map((submission) => (
@@ -167,14 +167,14 @@ function SubmissionCard({
                 onGraded();
               } catch (cause) {
                 onError(
-                  cause instanceof Error ? cause.message : "Could not save the mark.",
+                  cause instanceof Error ? cause.message : "Could not save the grade.",
                 );
               } finally {
                 setBusy(false);
               }
             }}
           >
-            Save mark
+            Save grade
           </Button>
         </div>
       </CardBody>

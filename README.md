@@ -82,10 +82,10 @@ These are enforced by tests, not by convention. Breaking one should fail CI.
 |---|---|
 | `quiz_options` and `quiz_questions.correct_answers` are unreachable with the anon key | no grant + `01_rls_test.sql` |
 | `lessons.content` and `lessons.video_id` are unreachable with the anon key | column grant + tests |
-| Students can read only their own enrolment, progress, attempts, certificates | RLS + tests |
-| Students cannot write enrolment, progress, attempts or certificates at all | no grant + tests |
+| Students can read only their own enrollment, progress, attempts, certificates | RLS + tests |
+| Students cannot write enrollment, progress, attempts or certificates at all | no grant + tests |
 | A student cannot change their own `role` | column grant + tests |
-| An expired enrolment loses entitlement immediately | `has_active_enrollment()` + tests |
+| An expired enrollment loses entitlement immediately | `has_active_enrollment()` + tests |
 | The audit log accepts no update or delete from any role | no grant + tests |
 
 ## Running it
@@ -164,7 +164,7 @@ decorator, so the check sits next to the thing it protects. If you add a route t
 lesson content, call it.
 
 The service authenticates to Postgres with the service role, which **bypasses RLS**. That is
-deliberate — this is the component trusted to write enrolment and progress — but it means a
+deliberate — this is the component trusted to write enrollment and progress — but it means a
 route that forgets its entitlement check is wide open. RLS is the backstop for the browser's
 own key, not for this service.
 
@@ -185,7 +185,7 @@ publish. Courses start as drafts and are invisible until published.
 | A course cannot be published until it has a lesson | An empty course in the catalog is worse than no course |
 | Reordering must send the complete ordering | A partial list leaves duplicate or missing positions and produces an order nobody chose |
 | A course with enrolled students cannot be deleted | The cascade would take their progress and certificates too — unpublish instead |
-| Revoking an enrolment sets a status, never deletes | So a mistake stays undoable |
+| Revoking an enrollment sets a status, never deletes | So a mistake stays undoable |
 | `PATCH` on a course cannot change `status` | Otherwise renaming a course could publish it |
 
 ### Video

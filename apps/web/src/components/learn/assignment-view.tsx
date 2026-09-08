@@ -100,7 +100,7 @@ export function AssignmentView({ assignment }: { assignment: Assignment }) {
                       {submission.score}% · {submission.passed ? "Passed" : "Not passed"}
                     </Badge>
                   ) : (
-                    <Badge>Awaiting marking</Badge>
+                    <Badge>Awaiting grading</Badge>
                   )}
                 </div>
                 {submission.text_answer ? (

@@ -30,7 +30,10 @@ export default async function DashboardPage() {
 
   // RLS scopes these to the signed-in user. There is no user_id filter here
   // because there does not need to be one, and one could be dropped.
-  const [{ data: enrollmentData }, { data: certificateData }] = await Promise.all([
+  const [
+    { data: enrollmentData, error: enrollmentError },
+    { data: certificateData },
+  ] = await Promise.all([
     supabase
       .from("enrollments")
       .select("id,progress_percent,completed_at,expires_at,status,courses(slug,title,subtitle)")
@@ -58,7 +61,27 @@ export default async function DashboardPage() {
       </h1>
 
       <section className="mt-8">
-        {active.length === 0 ? (
+        {enrollmentError ? (
+          // A failed query must not read as "you have no courses". They call for
+          // completely different reactions, and the second is a lie.
+          <EmptyState
+            title="Your courses could not be loaded"
+            description={`${enrollmentError.message} Refreshing usually fixes it.`}
+          />
+        ) : active.length === 0 && enrollments.length > 0 ? (
+          // Rows exist but none are active: refunded, revoked or expired. Saying
+          // "not enrolled in anything" would leave someone hunting for a course
+          // they can see they bought.
+          <EmptyState
+            title="No active courses"
+            description="Your enrollments are expired or have been revoked. Get in touch if that looks wrong."
+            action={
+              <Link href="/">
+                <Button>Browse courses</Button>
+              </Link>
+            }
+          />
+        ) : active.length === 0 ? (
           <EmptyState
             title="You are not enrolled in anything yet"
             description="Browse the catalog and pick a course to get started."

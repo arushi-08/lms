@@ -404,7 +404,7 @@ async def create_graded_attempt(
     return attempt_id
 
 
-# ---------------------------------------------------------------- enrolment --
+# ---------------------------------------------------------------- enrollment --
 
 @dataclass(frozen=True, slots=True)
 class EnrollableCourse:
@@ -428,7 +428,7 @@ async def get_course_by_slug(conn: Conn, slug: str) -> EnrollableCourse | None:
 async def self_enroll(
     conn: Conn, *, user_id: UUID, course_id: UUID, expires_at: datetime | None
 ) -> dict[str, Any]:
-    """Grant a free enrolment, reactivating a previous one rather than duplicating."""
+    """Grant a free enrollment, reactivating a previous one rather than duplicating."""
     row = await conn.fetchrow(
         """
         insert into enrollments (user_id, course_id, source, expires_at)

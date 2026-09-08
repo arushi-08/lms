@@ -1,4 +1,4 @@
--- 0004_enrollment: enrolments and per-lesson progress.
+-- 0004_enrollment: enrollments and per-lesson progress.
 
 create table public.enrollments (
   id               uuid primary key default gen_random_uuid(),
@@ -8,7 +8,7 @@ create table public.enrollments (
   source           public.enrollment_source not null,
   progress_percent numeric(5,2) not null default 0,
   last_lesson_id   uuid references public.lessons (id) on delete set null,
-  -- Snapshotted at enrolment from the course's access policy. Storing the
+  -- Snapshotted at enrollment from the course's access policy. Storing the
   -- resolved instant rather than recomputing from courses.access_days means
   -- changing a course's policy later can never retroactively revoke access
   -- somebody already paid for.

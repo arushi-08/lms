@@ -6,7 +6,7 @@ source of truth, and an ORM model set would be a second definition to drift
 from them.
 
 The pool authenticates with the service role, which bypasses RLS. That is the
-point -- this service is the component trusted to write enrolment and progress.
+point -- this service is the component trusted to write enrollment and progress.
 It also means every route is responsible for its own authorisation, and RLS is
 the backstop rather than the gate. Anything reachable without an entitlement
 check here is reachable by anyone.

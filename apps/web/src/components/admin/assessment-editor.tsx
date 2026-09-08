@@ -188,7 +188,7 @@ export function AssessmentEditor({
                 onChange={(e) =>
                   setQuestion({ ...question, correct_answers: [e.target.value] })
                 }
-                hint="Case and surrounding spaces are ignored when marking."
+                hint="Case and surrounding spaces are ignored when grading."
               />
             ) : (
               <div className="grid gap-2">

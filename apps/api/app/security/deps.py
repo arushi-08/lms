@@ -114,7 +114,7 @@ async def resolve_entitlement(
 
     ``require_enrollment=False`` is for playback, where a lesson flagged as a
     free preview is deliberately open. Progress and quizzes pass True, because
-    both write rows that hang off an enrolment.
+    both write rows that hang off an enrollment.
     """
     context = await learning.get_lesson_context(conn, lesson_id, user.user_id)  # type: ignore[arg-type]
     if context is None:

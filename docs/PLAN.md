@@ -30,7 +30,7 @@
 
 | # | Decision | Consequence |
 |---|---|---|
-| 1 | **Access model is per-course.** First course: one-time purchase, lifetime access. Other courses may differ later. | Access policy moves onto the `courses` row (`access_type` + `access_days`) and is resolved into `enrollments.expires_at` at enrolment time. §2.2, §2.3. |
+| 1 | **Access model is per-course.** First course: one-time purchase, lifetime access. Other courses may differ later. | Access policy moves onto the `courses` row (`access_type` + `access_days`) and is resolved into `enrollments.expires_at` at enrollment time. §2.2, §2.3. |
 | 2 | **Selling entity is registered in India.** | Payment layer goes behind a provider interface; Stripe stays the target but is no longer assumed. GST enters scope. See §1.G-IN — **this is the one open commercial risk in the plan**. |
 | 3 | **Frontend is Next.js (App Router).** | Server-rendered catalog for SEO; `@supabase/ssr` cookie sessions instead of `localStorage`. |
 | 4 | **Certificate = all required lessons complete + all quizzes passed. No gating.** | A failed quiz does not lock the next lesson. Unlimited retries by default (`max_attempts` null). §1.E, §1.F. |
@@ -50,7 +50,7 @@ this boundary wrong is the main way this architecture goes bad. The rule:
 | Path | Used for | Key used |
 |---|---|---|
 | Browser → Supabase (direct) | Reads of published catalog, own profile, own progress, own certificates. Protected by RLS. | `anon` key (public by design — safe **only** because RLS is on) |
-| Browser → FastAPI → Supabase | Enrolment, payments, quiz submission & grading, certificate issuance, video OTP, all admin writes | `service_role` key (**server-only, never shipped to the browser**) |
+| Browser → FastAPI → Supabase | Enrollment, payments, quiz submission & grading, certificate issuance, video OTP, all admin writes | `service_role` key (**server-only, never shipped to the browser**) |
 
 Anything a student could benefit from lying about goes through FastAPI. Quiz answer keys, for
 instance, must never be reachable by the `anon` key at all — not hidden in the UI, *denied by
@@ -100,7 +100,7 @@ RLS*.
 - `status` (`draft`/`published`/`archived`) so you can build a course before it goes live.
 - Rich text for `text` lessons authored with **TipTap**, stored as JSON, sanitised
   **server-side** with `nh3`/`bleach` before storage — never trust the editor's output.
-- `is_preview` flag lets a lesson play without enrolment (a real conversion driver).
+- `is_preview` flag lets a lesson play without enrollment (a real conversion driver).
 
 #### C. Video delivery (VdoCipher, DRM)
 This is the part with the hard security requirement, so the flow is worth spelling out.
@@ -111,7 +111,7 @@ stores `vdocipher_video_id` on the lesson.
 
 **Playback (student):**
 1. Browser asks `POST /api/video/otp` with the lesson id and its JWT.
-2. FastAPI checks: is the user authenticated, enrolled in the parent course, is the enrolment
+2. FastAPI checks: is the user authenticated, enrolled in the parent course, is the enrollment
    active (not refunded/expired), is the lesson published or a preview?
 3. Only then does FastAPI call VdoCipher `POST /api/videos/{id}/otp` with the **API secret**
    (server-only), requesting a short TTL (**300 s**) and a dynamic watermark annotation
@@ -171,11 +171,11 @@ want it on from day one rather than as a later add-on.
   the client**, plus `client_reference_id = user_id` and `metadata.course_id`.
 - **Webhook `checkout.session.completed`** → verify the Stripe signature → idempotency check
   against a `stripe_events` table → create `enrollment` + `payment` rows in one transaction.
-  Enrolment is granted by the webhook, **not** by the browser redirect (which users can fake
+  Enrollment is granted by the webhook, **not** by the browser redirect (which users can fake
   or simply never reach).
-- Also handled: `charge.refunded` → set enrolment `refunded`, revoke access;
+- Also handled: `charge.refunded` → set enrollment `refunded`, revoke access;
   `charge.dispute.created` → alert.
-- Free courses skip the payment provider entirely via a separate enrol endpoint.
+- Free courses skip the payment provider entirely via a separate enroll endpoint.
 
 #### G-IN. India: the payment provider is now a real risk, not a detail
 
@@ -198,10 +198,10 @@ class PaymentProvider(Protocol):
     def verify_webhook(self, body: bytes, sig: str) -> ProviderEvent: ...
 ```
 
-Everything downstream — enrolment, `payments`, refunds, the dashboard — consumes a
+Everything downstream — enrollment, `payments`, refunds, the dashboard — consumes a
 **normalised** `PaymentSucceeded(user_id, course_id, amount_cents, currency, provider_ref)`
 event and never imports the Stripe SDK. Swapping to Razorpay then means writing one adapter
-class, not touching enrolment logic.
+class, not touching enrollment logic.
 
 **The options, so you can decide with numbers:**
 
@@ -228,13 +228,13 @@ and would not match the design system.
 
 Covers: course CRUD with draft/publish; drag-and-drop module & lesson ordering; direct video
 upload with progress and encoding status; TipTap rich-text lessons; a quiz builder; student
-list with progress; manual enrolment grant/revoke; payment & refund history; certificate
+list with progress; manual enrollment grant/revoke; payment & refund history; certificate
 re-issue. Every admin mutation writes to `audit_log`.
 
 #### I. Notifications
 - **Transactional email via Resend** with React Email templates. Supabase's built-in SMTP is
   rate-limited and explicitly not for production, so custom SMTP is configured on day one.
-- Emails: verify address, password reset, enrolment confirmation, course completion +
+- Emails: verify address, password reset, enrollment confirmation, course completion +
   certificate, quiz passed, new lesson published, 14-day inactivity nudge.
 - In-app notification bell backed by a `notifications` table (Supabase Realtime optional).
 
@@ -250,7 +250,7 @@ Not a default component library skin. Concretely:
   mobile layouts rather than being squeezed.
 - WCAG 2.2 AA: keyboard navigation throughout, visible focus rings, labelled controls,
   captions on video (VdoCipher supports subtitle tracks).
-- **Every empty and error state designed, not defaulted**: no courses yet, no enrolments, no
+- **Every empty and error state designed, not defaulted**: no courses yet, no enrollments, no
   certificates, course with no modules, quiz with no questions, video failed to load, OTP
   expired (auto-retry once), payment pending, offline. This is a named QA checklist item, not
   a nice-to-have — it is the difference between "polished" and "demo".
@@ -315,14 +315,14 @@ Unique `(course_id, position)` deferrable.
 | `title`, `slug` | `text` | |
 | `type` | `lesson_type` enum | `video` \| `text` \| `quiz` |
 | `position` | `int` | unique per module |
-| `is_preview` | `bool` | playable without enrolment |
+| `is_preview` | `bool` | playable without enrollment |
 | `is_required` | `bool` | counts toward completion |
 | `duration_seconds` | `int` null | |
 | `content` | `jsonb` null | TipTap doc for `text` lessons |
 | `vdocipher_video_id` | `text` null | for `video` lessons |
 | `vdocipher_status` | `text` null | `uploading`/`processing`/`ready` |
 
-### 2.3 Enrolment & progress
+### 2.3 Enrollment & progress
 
 **`enrollments`** — unique `(user_id, course_id)`
 | column | type | notes |
@@ -334,7 +334,7 @@ Unique `(course_id, position)` deferrable.
 | `source` | `enrollment_source` enum | `purchase` \| `free` \| `manual` |
 | `progress_percent` | `numeric(5,2)` | maintained, not computed on read |
 | `last_lesson_id` | `uuid` null | "resume course" |
-| `expires_at` | `timestamptz` null | resolved **at enrolment time** from the course's `access_type`/`access_days`; null = lifetime. Snapshotting it here means changing a course's policy later never retroactively revokes access someone already paid for. |
+| `expires_at` | `timestamptz` null | resolved **at enrollment time** from the course's `access_type`/`access_days`; null = lifetime. Snapshotting it here means changing a course's policy later never retroactively revokes access someone already paid for. |
 | `enrolled_at`, `completed_at` | `timestamptz` | |
 
 Index: `(user_id, status)`, `(course_id)`.
@@ -422,7 +422,7 @@ hold the same bar; none are optional in my view, but the ones marked *(later)* c
       supported by Supabase Auth).
 - [ ] Application-level rate limiting on FastAPI (`slowapi` + Upstash Redis) for
       `/video/otp`, `/quiz/submit`, `/checkout` — per-user, not just per-IP.
-- [ ] Email verification required before enrolment.
+- [ ] Email verification required before enrollment.
 - [ ] Minimum password length 10 + Supabase's breached-password check (HIBP) enabled.
 - [ ] Short access-token TTL (1 h) with refresh-token rotation; logout revokes the refresh token.
 - [ ] Session stored in `httpOnly`, `Secure`, `SameSite=Lax` cookies via `@supabase/ssr` —
@@ -437,7 +437,7 @@ hold the same bar; none are optional in my view, but the ones marked *(later)* c
 - [ ] Role is server-owned: set only via `service_role`/SQL, propagated into the JWT by a
       custom access-token hook. A client-supplied role field is ignored everywhere.
 - [ ] Deny-by-default RLS enabled on **every** table.
-- [ ] Every object-scoped endpoint re-checks ownership/enrolment server-side (IDOR defence) —
+- [ ] Every object-scoped endpoint re-checks ownership/enrollment server-side (IDOR defence) —
       a valid JWT for user A must never read user B's attempt, progress or certificate.
 - [ ] `service_role` key exists only in backend env vars. A CI check greps the frontend bundle
       for it.
@@ -445,9 +445,9 @@ hold the same bar; none are optional in my view, but the ones marked *(later)* c
 ### 3.3 Video access control
 - [ ] **[brief]** Signed/expiring access, never public links: VdoCipher OTP with **300 s TTL**,
       minted per playback request.
-- [ ] **[brief]** OTP issued only after an enrolment + status + expiry check passes.
+- [ ] **[brief]** OTP issued only after an enrollment + status + expiry check passes.
 - [ ] VdoCipher API secret is server-side only; the browser never sees a video URL or the
-      video id in any pre-enrolment payload.
+      video id in any pre-enrollment payload.
 - [ ] DRM enabled (Widevine / FairPlay / PlayReady); **offline download disabled** in account
       settings.
 - [ ] Player domain allowlist restricted to production + preview domains.
@@ -462,7 +462,7 @@ hold the same bar; none are optional in my view, but the ones marked *(later)* c
 - [ ] Webhook signature verified with the endpoint secret on every delivery.
 - [ ] Idempotency via `stripe_events` primary key — replayed webhooks are no-ops.
 - [ ] Access granted by the **webhook**, never by the success-redirect.
-- [ ] Refund and dispute webhooks revoke enrolment.
+- [ ] Refund and dispute webhooks revoke enrollment.
 - [ ] Payment mutations wrapped in a single DB transaction.
 
 ### 3.5 Data protection
@@ -634,7 +634,7 @@ Proposed order once you give the go-ahead. Each phase ends somewhere demo-able.
 | **2 — Content model & admin** | Course/module/lesson CRUD, ordering, TipTap lessons, VdoCipher upload, draft/publish. Point: you can author a full course with no code. |
 | **3 — Learning experience** | Catalog, course page, player with DRM + watermark + OTP flow, progress heartbeats, resume, student dashboard. |
 | **4 — Assessment & certificates** | Quiz builder, quiz runner, server-side grading, attempts, certificate PDF + verification page. |
-| **5 — Payments** | Provider interface + Stripe adapter, hosted checkout, webhooks, idempotency, refunds, free-course enrolment, tax-inclusive pricing. **Gated on the Stripe-India answer (question 7)** — if it's unresolved by then I'll build the Razorpay adapter instead and keep Stripe as the second implementation. |
+| **5 — Payments** | Provider interface + Stripe adapter, hosted checkout, webhooks, idempotency, refunds, free-course enrollment, tax-inclusive pricing. **Gated on the Stripe-India answer (question 7)** — if it's unresolved by then I'll build the Razorpay adapter instead and keep Stripe as the second implementation. |
 | **6 — Polish & hardening** | Every empty/error state, mobile pass at 360 px, accessibility audit, CSP and security headers, load sanity check, E2E suite, restore drill #2. |
 
 Security work is not a phase — the checklist items land inside the phase that introduces the
