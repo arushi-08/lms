@@ -7,6 +7,7 @@ their own work.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -15,7 +16,9 @@ from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from app.repositories import admin as admin_repo
 from app.repositories import assessment as repo
+from app.repositories import learning
 from app.security.deps import AdminDep, CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.services import completion
 
 router = APIRouter(tags=["assignments"])
 
@@ -117,6 +120,28 @@ async def submit(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
 
+        # An ungraded assignment is finished by handing it in -- there is no
+        # grade coming, so waiting for one would strand the lesson forever.
+        if not assignment.is_graded:
+            context = await learning.get_lesson_context(
+                conn, assignment.lesson_id, user.user_id
+            )
+            if context and context.enrollment_id:
+                await learning.mark_lesson_complete(
+                    conn,
+                    user_id=user.user_id,
+                    lesson_id=assignment.lesson_id,
+                    enrollment_id=context.enrollment_id,
+                    now=datetime.now(UTC),
+                )
+                await completion.recompute(
+                    conn,
+                    course_id=assignment.course_id,
+                    user_id=user.user_id,
+                    enrollment_id=context.enrollment_id,
+                    last_lesson_id=assignment.lesson_id,
+                )
+
     return {**submission, "id": str(submission["id"])}
 
 
@@ -157,6 +182,29 @@ async def grade(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
+
+        # A passing grade finishes the lesson for that student, and their
+        # course standing moves without them reloading anything.
+        if result["passed"]:
+            assignment = await repo.get_assignment(conn, result["assignment_id"])
+            if assignment is not None:
+                context = await learning.get_lesson_context(
+                    conn, assignment.lesson_id, result["user_id"]
+                )
+                if context and context.enrollment_id:
+                    await learning.mark_lesson_complete(
+                        conn,
+                        user_id=result["user_id"],
+                        lesson_id=assignment.lesson_id,
+                        enrollment_id=context.enrollment_id,
+                        now=datetime.now(UTC),
+                    )
+                    await completion.recompute(
+                        conn,
+                        course_id=assignment.course_id,
+                        user_id=result["user_id"],
+                        enrollment_id=context.enrollment_id,
+                    )
 
         await admin_repo.write_audit(
             conn,

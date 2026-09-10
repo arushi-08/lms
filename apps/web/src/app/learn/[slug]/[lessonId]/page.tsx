@@ -14,6 +14,7 @@ type Lesson = {
   type: string;
   position: number;
   is_preview: boolean;
+  duration_seconds: number | null;
 };
 
 export default async function LearnPage({
@@ -27,7 +28,8 @@ export default async function LearnPage({
   const { data } = await supabase
     .from("courses")
     .select(
-      "id,slug,title,modules(id,title,position,lessons(id,title,type,position,is_preview))",
+      "id,slug,title,modules(id,title,position," +
+        "lessons(id,title,type,position,is_preview,duration_seconds))",
     )
     .eq("slug", slug)
     .maybeSingle();

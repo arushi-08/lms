@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 
 import { AssignmentView } from "@/components/learn/assignment-view";
 import { QuizRunner } from "@/components/learn/quiz-runner";
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
+import { adminFetch } from "@/lib/admin-client";
 import type { Assignment, Quiz } from "@/lib/api";
 
 type Lesson = {
@@ -19,6 +21,7 @@ type Lesson = {
   type: string;
   position: number;
   is_preview: boolean;
+  duration_seconds?: number | null;
 };
 
 export function LessonView({
@@ -36,12 +39,23 @@ export function LessonView({
   assignment?: Assignment | null;
   assessmentError?: string | null;
 }) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [percent, setPercent] = useState<number | null>(null);
+  const [marking, setMarking] = useState(false);
+  const [markError, setMarkError] = useState<string | null>(null);
   const lesson = lessons[currentIndex];
   const previous = currentIndex > 0 ? lessons[currentIndex - 1] : undefined;
   const next = currentIndex < lessons.length - 1 ? lessons[currentIndex + 1] : undefined;
 
   if (!lesson) return null;
+
+  // Quizzes and assignments complete by being passed. Videos complete by being
+  // watched -- but only once their length is known, so a lesson uploaded before
+  // durations were recorded is not stranded.
+  const canMarkComplete =
+    lesson.type === "text" ||
+    (lesson.type === "video" && !lesson.duration_seconds);
 
   return (
     <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_18rem]">
@@ -86,6 +100,39 @@ export function LessonView({
             />
           )}
         </div>
+
+        {canMarkComplete ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={marking}
+              onClick={async () => {
+                setMarking(true);
+                setMarkError(null);
+                try {
+                  const result = await adminFetch<{ course_progress_percent: number }>(
+                    `/api/lessons/${lesson.id}/complete`,
+                    { method: "POST" },
+                  );
+                  setPercent(result.course_progress_percent);
+                  startTransition(() => router.refresh());
+                } catch (cause) {
+                  setMarkError(
+                    cause instanceof Error ? cause.message : "Could not save that.",
+                  );
+                } finally {
+                  setMarking(false);
+                }
+              }}
+            >
+              Mark as complete
+            </Button>
+            {markError ? (
+              <span className="text-sm text-danger">{markError}</span>
+            ) : null}
+          </div>
+        ) : null}
 
         {percent !== null ? (
           <div className="mt-4 flex items-center gap-3">

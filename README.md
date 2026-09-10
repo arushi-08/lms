@@ -254,3 +254,30 @@ their recorded responses mean. Add a new question instead.
 File upload on assignments. The column exists so adding it is not a migration of existing
 rows, but it needs Supabase Storage plus virus scanning and quota handling — a larger piece
 than it looks. Links cover the common case meanwhile.
+
+## How a lesson completes
+
+Nothing else moves the progress bar, so each type needs a path:
+
+| Lesson type | Completes when |
+|---|---|
+| Video with a recorded duration | watch time reaches the course's threshold (default 90%) |
+| Video with no duration recorded | the student marks it complete |
+| Text | the student marks it complete |
+| Quiz | an attempt passes |
+| Assignment (graded) | a submission is graded at or above the pass mark |
+| Assignment (ungraded) | it is handed in — no grade is coming |
+
+**Duration is recorded at upload, by the admin's browser, never by a student's player.**
+A student who could report duration would report one second and finish instantly. A video
+whose container the browser cannot parse simply has no duration, and falls back to manual
+completion rather than being stranded.
+
+**Watch time is cumulative, and the player is seeded from the server.** `currentTime` is a
+position: a player reporting it directly would, on a re-watch, send numbers below what was
+already credited, and since credit only counts increases the lesson could never be finished
+by anyone who left and came back. The playback grant therefore returns `watched_seconds` and
+`last_position_seconds`; the player continues from there and resumes at the right place.
+
+Seeks are not credited — only forward movement of about one tick — or the scrub bar would be
+a fast-forward to completion.

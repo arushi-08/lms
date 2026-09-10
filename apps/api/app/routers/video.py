@@ -41,6 +41,13 @@ class PlaybackResponse(BaseModel):
     expires_at: str
     #: Populated only by the mock provider in development.
     direct_url: str | None = None
+    #: Watch time already credited. The player seeds its counter from this and
+    #: reports the running total, so re-watching from the start still adds to
+    #: what came before instead of reporting a smaller number that credits
+    #: nothing.
+    watched_seconds: int = 0
+    #: Where to resume from.
+    last_position_seconds: int = 0
 
 
 @router.post("/{lesson_id}/playback", response_model=PlaybackResponse)
@@ -99,6 +106,8 @@ async def create_playback_grant(
             user_agent=request.headers.get("user-agent"),
         )
 
+        stored = await learning.get_progress(conn, user.user_id, lesson_id)
+
     # Same reason as the upload URL: a relative path would resolve against the
     # frontend origin, where no such route exists.
     direct_url = grant.direct_url
@@ -111,4 +120,6 @@ async def create_playback_grant(
         playback_info=grant.playback_info,
         expires_at=grant.expires_at.isoformat(),
         direct_url=direct_url,
+        watched_seconds=stored.watched_seconds if stored else 0,
+        last_position_seconds=stored.last_position_seconds if stored else 0,
     )

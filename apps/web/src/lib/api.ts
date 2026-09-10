@@ -81,6 +81,8 @@ export type PlaybackGrant = {
   playback_info: string;
   expires_at: string;
   direct_url: string | null;
+  watched_seconds: number;
+  last_position_seconds: number;
 };
 
 export type ProgressUpdate = {

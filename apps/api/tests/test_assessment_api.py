@@ -384,3 +384,214 @@ class TestAssignments:
                 json={"text_answer": "not mine"},
             )
         ).status_code == 403
+
+
+class TestCourseProgressMoves:
+    """The bar was stuck at 0% because nothing could ever complete a lesson."""
+
+    async def test_passing_a_quiz_completes_its_lesson(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "quiz")
+        quiz = await client.put(
+            f"/api/admin/lessons/{lesson_id}/quiz",
+            headers=admin_auth,
+            json={"title": "Q", "passing_score": 50},
+        )
+        await client.put(
+            f"/api/admin/quizzes/{quiz.json()['id']}/questions",
+            headers=admin_auth,
+            json={
+                "type": "boolean",
+                "prompt": "True?",
+                "options": [{"text": "True", "is_correct": True}, {"text": "False"}],
+            },
+        )
+        student = await client.get(f"/api/quizzes/by-lesson/{lesson_id}", headers=alice_auth)
+        question = student.json()["questions"][0]
+        correct = next(o["id"] for o in question["options"] if o["text"] == "True")
+
+        result = await client.post(
+            f"/api/quizzes/{student.json()['quiz_id']}/attempts",
+            headers=alice_auth,
+            json={"responses": [{"question_id": question["id"], "selected_option_ids": [correct]}]},
+        )
+        assert result.json()["passed"] is True
+        # One required lesson in the course, now complete.
+        assert result.json()["course_progress_percent"] == 100.0
+        assert await conn.fetchval(
+            "select completed from lesson_progress where lesson_id = $1", lesson_id
+        )
+
+    async def test_failing_a_quiz_does_not_complete_it(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "quiz")
+        quiz = await client.put(
+            f"/api/admin/lessons/{lesson_id}/quiz",
+            headers=admin_auth,
+            json={"title": "Q", "passing_score": 50},
+        )
+        await client.put(
+            f"/api/admin/quizzes/{quiz.json()['id']}/questions",
+            headers=admin_auth,
+            json={
+                "type": "boolean",
+                "prompt": "True?",
+                "options": [{"text": "True", "is_correct": True}, {"text": "False"}],
+            },
+        )
+        student = await client.get(f"/api/quizzes/by-lesson/{lesson_id}", headers=alice_auth)
+        result = await client.post(
+            f"/api/quizzes/{student.json()['quiz_id']}/attempts",
+            headers=alice_auth,
+            json={"responses": []},
+        )
+        assert result.json()["passed"] is False
+        assert result.json()["course_progress_percent"] == 0.0
+        assert not await conn.fetchval(
+            "select coalesce(completed, false) from lesson_progress where lesson_id = $1",
+            lesson_id,
+        )
+
+    async def test_text_lesson_can_be_marked_complete(
+        self, client, admin_auth, alice_auth
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "text")
+        response = await client.post(
+            f"/api/lessons/{lesson_id}/complete", headers=alice_auth
+        )
+        assert response.status_code == 200
+        assert response.json()["completed"] is True
+        assert response.json()["course_progress_percent"] == 100.0
+
+    async def test_video_of_unknown_length_can_be_marked_complete(
+        self, client, admin_auth, alice_auth
+    ) -> None:
+        # Otherwise a lesson whose duration was never recorded is stuck forever.
+        _, lesson_id = await scaffold(client, admin_auth, "video")
+        response = await client.post(
+            f"/api/lessons/{lesson_id}/complete", headers=alice_auth
+        )
+        assert response.status_code == 200
+
+    async def test_video_of_known_length_must_be_watched(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        # Once the platform knows how long it is, clicking past it is refused.
+        _, lesson_id = await scaffold(client, admin_auth, "video")
+        await conn.execute(
+            "update lessons set duration_seconds = 600 where id = $1", lesson_id
+        )
+        response = await client.post(
+            f"/api/lessons/{lesson_id}/complete", headers=alice_auth
+        )
+        assert response.status_code == 400
+        assert "watch" in response.json()["detail"]
+
+    async def test_quiz_lesson_cannot_be_clicked_complete(
+        self, client, admin_auth, alice_auth
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "quiz")
+        response = await client.post(
+            f"/api/lessons/{lesson_id}/complete", headers=alice_auth
+        )
+        assert response.status_code == 400
+
+    async def test_passing_grade_completes_the_assignment_lesson(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "assignment")
+        created = await client.put(
+            f"/api/admin/lessons/{lesson_id}/assignment",
+            headers=admin_auth,
+            json={"title": "A", "instructions": "x", "passing_score": 60},
+        )
+        submitted = await client.post(
+            f"/api/assignments/{created.json()['id']}/submissions",
+            headers=alice_auth,
+            json={"text_answer": "my work"},
+        )
+        assert not await conn.fetchval(
+            "select coalesce(completed, false) from lesson_progress where lesson_id = $1",
+            lesson_id,
+        )
+
+        await client.post(
+            f"/api/admin/submissions/{submitted.json()['id']}/grade",
+            headers=admin_auth,
+            json={"score": 90},
+        )
+        assert await conn.fetchval(
+            "select completed from lesson_progress where lesson_id = $1", lesson_id
+        )
+
+    async def test_ungraded_assignment_completes_on_submission(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        # No grade is coming, so waiting for one would strand the lesson.
+        _, lesson_id = await scaffold(client, admin_auth, "assignment")
+        created = await client.put(
+            f"/api/admin/lessons/{lesson_id}/assignment",
+            headers=admin_auth,
+            json={"title": "A", "instructions": "x", "is_graded": False},
+        )
+        await client.post(
+            f"/api/assignments/{created.json()['id']}/submissions",
+            headers=alice_auth,
+            json={"text_answer": "handed in"},
+        )
+        assert await conn.fetchval(
+            "select completed from lesson_progress where lesson_id = $1", lesson_id
+        )
+
+    async def test_non_enrolled_student_cannot_mark_complete(
+        self, client, admin_auth, bob_auth
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "text")
+        response = await client.post(f"/api/lessons/{lesson_id}/complete", headers=bob_auth)
+        assert response.status_code == 403
+
+    async def test_playback_grant_reports_progress_so_far(
+        self, client, admin_auth, alice_auth, conn
+    ) -> None:
+        """The player continues the total instead of starting over.
+
+        currentTime is a position, not accumulated watch time. A player that
+        reported it directly would, on a re-watch, send numbers below what the
+        server already credited — and since credit only counts increases, the
+        lesson could never be finished by anyone who left and came back.
+        """
+        _, lesson_id = await scaffold(client, admin_auth, "video")
+        await conn.execute(
+            "update lessons set duration_seconds = 600, video_id = 'v', "
+            "video_status = 'ready' where id = $1",
+            lesson_id,
+        )
+        await client.post(
+            f"/api/lessons/{lesson_id}/progress",
+            headers=alice_auth,
+            json={"watched_seconds": 45, "position_seconds": 45},
+        )
+
+        grant = await client.post(f"/api/lessons/{lesson_id}/playback", headers=alice_auth)
+        assert grant.status_code == 200
+        assert grant.json()["watched_seconds"] == 45
+        assert grant.json()["last_position_seconds"] == 45
+
+    async def test_a_smaller_report_never_reduces_credit(
+        self, client, admin_auth, alice_auth
+    ) -> None:
+        _, lesson_id = await scaffold(client, admin_auth, "video")
+        await client.post(
+            f"/api/lessons/{lesson_id}/progress",
+            headers=alice_auth,
+            json={"watched_seconds": 40, "position_seconds": 40},
+        )
+        response = await client.post(
+            f"/api/lessons/{lesson_id}/progress",
+            headers=alice_auth,
+            json={"watched_seconds": 5, "position_seconds": 5},
+        )
+        assert response.json()["watched_seconds"] == 40
+        assert response.json()["last_position_seconds"] == 5

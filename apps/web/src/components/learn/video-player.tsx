@@ -8,6 +8,8 @@ import { adminFetch } from "@/lib/admin-client";
 import type { PlaybackGrant } from "@/lib/api";
 
 const HEARTBEAT_SECONDS = 20;
+//: A timeupdate gap larger than this is a seek, not playback.
+const MAX_TICK_SECONDS = 2;
 
 /**
  * Plays one lesson, and reports progress while it does.
@@ -33,20 +35,45 @@ export function VideoPlayer({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const lastSent = useRef(0);
+  //: Running total of watch time, seeded from what the server already credited.
+  const watched = useRef(0);
+  //: Previous currentTime, for measuring how much actually played.
+  const lastTime = useRef(0);
 
   async function start() {
     setLoading(true);
     setError(null);
     try {
-      setGrant(
-        await adminFetch<PlaybackGrant>(`/api/lessons/${lessonId}/playback`, {
-          method: "POST",
-        }),
+      const issued = await adminFetch<PlaybackGrant>(
+        `/api/lessons/${lessonId}/playback`,
+        { method: "POST" },
       );
+      // Continue the total rather than starting over: currentTime is a
+      // position, and on a re-watch it begins below what is already credited,
+      // which would report a decrease and earn nothing for the rest of time.
+      watched.current = issued.watched_seconds;
+      lastSent.current = issued.watched_seconds;
+      lastTime.current = issued.last_position_seconds;
+      setGrant(issued);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not start playback.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * Fold one timeupdate into the running total.
+   *
+   * Only forward movement of roughly one tick counts. A jump means the viewer
+   * seeked, and crediting a seek would make the scrub bar a fast-forward to
+   * completion.
+   */
+  function accumulate(currentTime: number) {
+    const delta = currentTime - lastTime.current;
+    lastTime.current = currentTime;
+    if (delta > 0 && delta < MAX_TICK_SECONDS) {
+      watched.current += delta;
     }
   }
 
@@ -126,14 +153,24 @@ export function VideoPlayer({
       controlsList="nodownload"
       onContextMenu={(event) => event.preventDefault()}
       className="aspect-video w-full rounded-lg bg-black"
+      onLoadedMetadata={(event) => {
+        // Resume where they left off.
+        const el = event.currentTarget;
+        if (grant.last_position_seconds > 0 && grant.last_position_seconds < el.duration) {
+          el.currentTime = grant.last_position_seconds;
+          lastTime.current = grant.last_position_seconds;
+        }
+      }}
       onTimeUpdate={(event) => {
         const el = event.currentTarget;
-        void beat(el.currentTime, el.currentTime);
+        accumulate(el.currentTime);
+        void beat(watched.current, el.currentTime);
       }}
       onEnded={(event) => {
         const el = event.currentTarget;
+        // Flush the tail of the last interval rather than losing up to 20s.
         lastSent.current = 0;
-        void beat(el.duration || el.currentTime, el.currentTime);
+        void beat(watched.current, el.currentTime);
       }}
     />
   );

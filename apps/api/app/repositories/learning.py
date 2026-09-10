@@ -442,3 +442,53 @@ async def self_enroll(
         expires_at,
     )
     return dict(row)
+
+
+# ------------------------------------------------------- completion writes --
+
+async def mark_lesson_complete(
+    conn: Conn,
+    *,
+    user_id: UUID,
+    lesson_id: UUID,
+    enrollment_id: UUID,
+    now: datetime,
+) -> None:
+    """Record a lesson as done, whatever earned it.
+
+    Video lessons reach this through watch time; quizzes through a passing
+    attempt; assignments through a passing grade. Completion is monotonic --
+    re-running this never un-completes anything, and never moves the original
+    timestamp.
+    """
+    await conn.execute(
+        """
+        insert into lesson_progress (user_id, lesson_id, enrollment_id, completed, completed_at)
+        values ($1, $2, $3, true, $4)
+        on conflict (user_id, lesson_id) do update set
+            completed    = true,
+            completed_at = coalesce(lesson_progress.completed_at, excluded.completed_at)
+        """,
+        user_id,
+        lesson_id,
+        enrollment_id,
+        now,
+    )
+
+
+async def set_lesson_duration_if_unset(
+    conn: Conn, lesson_id: UUID, duration_seconds: int
+) -> None:
+    """Record a video's length, but only the first time.
+
+    Duration decides when a lesson counts as watched, so it is written from the
+    *authoring* side -- an admin uploading the file -- and never from a
+    student's player. A student who could report it would report one second and
+    complete the lesson instantly.
+    """
+    await conn.execute(
+        "update lessons set duration_seconds = $2 "
+        "where id = $1 and (duration_seconds is null or duration_seconds = 0)",
+        lesson_id,
+        duration_seconds,
+    )

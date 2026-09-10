@@ -9,6 +9,7 @@ browser's own credentials any access to them.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -16,9 +17,9 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.domain import grading
-from app.domain.progress import course_progress_percent, is_course_complete
 from app.repositories import learning
 from app.security.deps import CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.services import completion
 
 router = APIRouter(prefix="/quizzes", tags=["quizzes"])
 
@@ -166,26 +167,30 @@ async def submit_attempt(
             ],
         )
 
-        counts = await learning.get_completion_counts(conn, meta.course_id, user.user_id)
-        percent = course_progress_percent(counts.required_total, counts.required_completed)
-        course_done = is_course_complete(
-            required_total=counts.required_total,
-            required_completed=counts.required_completed,
-            quizzes_total=counts.quizzes_total,
-            quizzes_passed=counts.quizzes_passed,
-            graded_assignments_total=counts.graded_assignments_total,
-            graded_assignments_passed=counts.graded_assignments_passed,
-        )
-
         context = await learning.get_lesson_context(conn, meta.lesson_id, user.user_id)
+        percent = 0.0
+        course_done = False
         if context and context.enrollment_id:
-            await learning.update_enrollment_progress(
+            # Passing the quiz is what finishes the lesson. Without this a quiz
+            # lesson could never complete, and a course containing one could
+            # never reach 100% however many times it was passed.
+            if result.passed:
+                await learning.mark_lesson_complete(
+                    conn,
+                    user_id=user.user_id,
+                    lesson_id=meta.lesson_id,
+                    enrollment_id=context.enrollment_id,
+                    now=datetime.now(UTC),
+                )
+            standing = await completion.recompute(
                 conn,
+                course_id=meta.course_id,
+                user_id=user.user_id,
                 enrollment_id=context.enrollment_id,
-                progress_percent=percent,
-                completed=course_done,
                 last_lesson_id=meta.lesson_id,
             )
+            percent = standing.progress_percent
+            course_done = standing.course_completed
 
     return AttemptResultView(
         attempt_id=attempt_id,

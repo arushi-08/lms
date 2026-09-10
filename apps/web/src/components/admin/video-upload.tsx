@@ -68,6 +68,29 @@ export function VideoUpload({
     };
   }, [phase, lesson.id, onChanged]);
 
+  /**
+   * Read a video file's length in the browser.
+   *
+   * Duration decides when a lesson counts as watched, so it is read here, on
+   * the *authoring* side, and never from a student's player — a student who
+   * could report it would report one second and complete the lesson instantly.
+   */
+  function readDuration(file: File): Promise<number | null> {
+    return new Promise((resolve) => {
+      const element = document.createElement("video");
+      const url = URL.createObjectURL(file);
+      const done = (value: number | null) => {
+        URL.revokeObjectURL(url);
+        resolve(value);
+      };
+      element.preload = "metadata";
+      element.onloadedmetadata = () =>
+        done(Number.isFinite(element.duration) ? Math.round(element.duration) : null);
+      element.onerror = () => done(null);
+      element.src = url;
+    });
+  }
+
   async function upload(file: File) {
     setError(null);
     setPhase("uploading");
@@ -102,6 +125,16 @@ export function VideoUpload({
         request.onerror = () => reject(new Error("upload failed"));
         request.send(form);
       });
+
+      // Best effort: a container the browser cannot parse leaves duration
+      // unset, and the lesson falls back to manual completion.
+      const seconds = await readDuration(file);
+      if (seconds && seconds > 0) {
+        await adminFetch(`/api/admin/lessons/${lesson.id}`, {
+          method: "PATCH",
+          body: { duration_seconds: seconds },
+        });
+      }
 
       setPhase("processing");
       onChanged();

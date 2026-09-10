@@ -196,4 +196,8 @@ async def grade_submission(
         feedback,
         grader_id,
     )
-    return {**dict(row), "user_id": assignment["user_id"]}
+    return {
+        **dict(row),
+        "user_id": assignment["user_id"],
+        "assignment_id": assignment["assignment_id"],
+    }

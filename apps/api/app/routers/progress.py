@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.domain import progress as domain
 from app.repositories import learning
 from app.security.deps import CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.services import completion
 
 router = APIRouter(prefix="/lessons", tags=["progress"])
 
@@ -90,22 +91,11 @@ async def record_progress(
             last_heartbeat_at=update.last_heartbeat_at,
         )
 
-        counts = await learning.get_completion_counts(conn, context.course_id, user.user_id)
-        percent = domain.course_progress_percent(counts.required_total, counts.required_completed)
-        course_done = domain.is_course_complete(
-            required_total=counts.required_total,
-            required_completed=counts.required_completed,
-            quizzes_total=counts.quizzes_total,
-            quizzes_passed=counts.quizzes_passed,
-            graded_assignments_total=counts.graded_assignments_total,
-            graded_assignments_passed=counts.graded_assignments_passed,
-        )
-
-        await learning.update_enrollment_progress(
+        standing = await completion.recompute(
             conn,
+            course_id=context.course_id,
+            user_id=user.user_id,
             enrollment_id=context.enrollment_id,
-            progress_percent=percent,
-            completed=course_done,
             last_lesson_id=lesson_id,
         )
 
@@ -114,6 +104,70 @@ async def record_progress(
         watched_seconds=update.watched_seconds,
         last_position_seconds=update.last_position_seconds,
         completed=update.completed,
-        course_progress_percent=percent,
-        course_completed=course_done,
+        course_progress_percent=standing.progress_percent,
+        course_completed=standing.course_completed,
+    )
+
+
+@router.post("/{lesson_id}/complete", response_model=ProgressResponse)
+async def mark_complete(
+    lesson_id: UUID,
+    user: CurrentUserDep,
+    database: DatabaseDep,
+) -> ProgressResponse:
+    """Finish a lesson that watch time cannot finish on its own.
+
+    Text lessons have nothing to measure. Video lessons whose length is not yet
+    recorded cannot be measured either -- the 90% rule needs a denominator --
+    and refusing them would leave those lessons permanently incomplete, which
+    is worse than accepting a student's word for it. Once a duration is
+    recorded, the watch rule governs and this is refused, so nobody can click
+    past a video the platform knows the length of.
+    """
+    now = datetime.now(UTC)
+
+    async with database.transaction() as conn:
+        entitlement = await resolve_entitlement(
+            conn, lesson_id=lesson_id, user=user, require_enrollment=True
+        )
+        context = entitlement.context
+
+        if context.enrollment_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="no enrollment to record against"
+            )
+        if context.lesson_type in {"quiz", "assignment"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="this lesson completes by passing it, not by marking it done",
+            )
+        if context.lesson_type == "video" and context.duration_seconds:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="watch the video to complete this lesson",
+            )
+
+        await learning.mark_lesson_complete(
+            conn,
+            user_id=user.user_id,
+            lesson_id=lesson_id,
+            enrollment_id=context.enrollment_id,
+            now=now,
+        )
+        standing = await completion.recompute(
+            conn,
+            course_id=context.course_id,
+            user_id=user.user_id,
+            enrollment_id=context.enrollment_id,
+            last_lesson_id=lesson_id,
+        )
+        stored = await learning.get_progress(conn, user.user_id, lesson_id)
+
+    return ProgressResponse(
+        lesson_id=lesson_id,
+        watched_seconds=stored.watched_seconds if stored else 0,
+        last_position_seconds=stored.last_position_seconds if stored else 0,
+        completed=True,
+        course_progress_percent=standing.progress_percent,
+        course_completed=standing.course_completed,
     )
