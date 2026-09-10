@@ -6,6 +6,8 @@ import { VideoPlayer } from "@/components/learn/video-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { adminFetch, type AdminLesson } from "@/lib/admin-client";
+import type { PlaybackGrant } from "@/lib/api";
+import { readDurationFromFile, readDurationFromUrl } from "@/lib/video-duration";
 
 type Ticket = {
   video_id: string;
@@ -43,6 +45,7 @@ export function VideoUpload({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -68,27 +71,35 @@ export function VideoUpload({
     };
   }, [phase, lesson.id, onChanged]);
 
-  /**
-   * Read a video file's length in the browser.
-   *
-   * Duration decides when a lesson counts as watched, so it is read here, on
-   * the *authoring* side, and never from a student's player — a student who
-   * could report it would report one second and complete the lesson instantly.
-   */
-  function readDuration(file: File): Promise<number | null> {
-    return new Promise((resolve) => {
-      const element = document.createElement("video");
-      const url = URL.createObjectURL(file);
-      const done = (value: number | null) => {
-        URL.revokeObjectURL(url);
-        resolve(value);
-      };
-      element.preload = "metadata";
-      element.onloadedmetadata = () =>
-        done(Number.isFinite(element.duration) ? Math.round(element.duration) : null);
-      element.onerror = () => done(null);
-      element.src = url;
-    });
+  /** Record the length of a video that is already uploaded. */
+  async function detectLength() {
+    setDetecting(true);
+    setError(null);
+    try {
+      const grant = await adminFetch<PlaybackGrant>(
+        `/api/lessons/${lesson.id}/playback`,
+        { method: "POST" },
+      );
+      if (!grant.direct_url) {
+        // VdoCipher streams through its own player and exposes no URL to read.
+        setError("Length must come from the provider for DRM video; set it by hand.");
+        return;
+      }
+      const seconds = await readDurationFromUrl(grant.direct_url);
+      if (!seconds) {
+        setError("Could not read the length of this file.");
+        return;
+      }
+      await adminFetch(`/api/admin/lessons/${lesson.id}`, {
+        method: "PATCH",
+        body: { duration_seconds: seconds },
+      });
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not detect the length.");
+    } finally {
+      setDetecting(false);
+    }
   }
 
   async function upload(file: File) {
@@ -128,7 +139,7 @@ export function VideoUpload({
 
       // Best effort: a container the browser cannot parse leaves duration
       // unset, and the lesson falls back to manual completion.
-      const seconds = await readDuration(file);
+      const seconds = await readDurationFromFile(file);
       if (seconds && seconds > 0) {
         await adminFetch(`/api/admin/lessons/${lesson.id}`, {
           method: "PATCH",
@@ -179,6 +190,28 @@ export function VideoUpload({
         <Button type="button" variant="ghost" size="sm" onClick={() => setPlaying((p) => !p)}>
           {playing ? "Hide" : "Play"}
         </Button>
+      ) : null}
+
+      {lesson.video_status === "ready" && !lesson.duration_seconds ? (
+        // Videos uploaded before durations were captured have none, and without
+        // one the watch rule has no denominator and never fires. This reads the
+        // length back from the uploaded file rather than making anyone upload it
+        // again.
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          loading={detecting}
+          onClick={() => void detectLength()}
+        >
+          Detect length
+        </Button>
+      ) : null}
+
+      {lesson.duration_seconds ? (
+        <span className="text-xs text-subtle">
+          {Math.floor(lesson.duration_seconds / 60)}m {lesson.duration_seconds % 60}s
+        </span>
       ) : null}
 
       {playing ? (

@@ -281,3 +281,21 @@ by anyone who left and came back. The playback grant therefore returns `watched_
 
 Seeks are not credited — only forward movement of about one tick — or the scrub bar would be
 a fast-forward to completion.
+
+### When the bar will not move
+
+```bash
+cd apps/api && . .venv/bin/activate
+python ../../scripts/diagnose_progress.py you@example.com pilot-course
+```
+
+Read-only. It prints every required lesson and exactly what is holding each one back — no
+duration recorded, quiz scored below the pass mark, assignment awaiting grading, and so on —
+then lists what is blocking 100%. It also flags a stored `progress_percent` that disagrees
+with the lessons actually completed.
+
+**Videos uploaded before durations were captured have none**, and without a length the watch
+rule has no denominator and never fires. Use **Detect length** in the course editor: it reads
+the length back from the already-uploaded file, so nothing needs re-uploading. DRM video
+streams through the provider's player and exposes no URL to read, so for VdoCipher the
+duration is set from the provider or by hand.
