@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     stripe_secret_key: SecretStr | None = None
     stripe_webhook_secret: SecretStr | None = None
 
+    # --- Rate limiting ------------------------------------------------------
+    #: In-process, single instance. See docs/AUTH_AND_SCALE.md for why not Redis.
+    rate_limit_enabled: bool = True
+
     # --- Observability ------------------------------------------------------
     sentry_dsn: str | None = None
 

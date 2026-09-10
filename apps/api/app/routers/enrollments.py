@@ -10,21 +10,24 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.domain.progress import resolve_expiry
 from app.repositories import learning
-from app.security.deps import CurrentUserDep, DatabaseDep
+from app.security.deps import CurrentUserDep, DatabaseDep, rate_limit
+from app.security.ratelimit import Limits
 
 router = APIRouter(prefix="/enrollments", tags=["enrollments"])
+
+_limit = rate_limit("enrollment", Limits().enrollment)
 
 
 class EnrollRequest(BaseModel):
     course_slug: str = Field(min_length=1, max_length=200)
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(_limit)])
 async def enroll(
     payload: EnrollRequest, user: CurrentUserDep, database: DatabaseDep
 ) -> dict[str, Any]:

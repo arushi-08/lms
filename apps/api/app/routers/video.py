@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.providers.video.base import VideoProviderError, Viewer
@@ -28,10 +28,16 @@ from app.security.deps import (
     DatabaseDep,
     SettingsDep,
     VideoProviderDep,
+    rate_limit,
     resolve_entitlement,
 )
+from app.security.ratelimit import Limits
 
 router = APIRouter(prefix="/lessons", tags=["video"])
+
+#: Minting an OTP is the most abusable route here: each one is a fresh licence
+#: to play protected content.
+_playback_limit = rate_limit("playback", Limits().playback)
 
 
 class PlaybackResponse(BaseModel):
@@ -50,7 +56,11 @@ class PlaybackResponse(BaseModel):
     last_position_seconds: int = 0
 
 
-@router.post("/{lesson_id}/playback", response_model=PlaybackResponse)
+@router.post(
+    "/{lesson_id}/playback",
+    response_model=PlaybackResponse,
+    dependencies=[Depends(_playback_limit)],
+)
 async def create_playback_grant(
     lesson_id: UUID,
     request: Request,

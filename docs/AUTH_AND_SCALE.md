@@ -39,9 +39,9 @@ downgrade with more code.
 
 Four items. Ordered by how much they matter.
 
-### 3.1 Rate limiting — the real gap
+### 3.1 Rate limiting — the real gap ✅ built
 
-Specified in `PLAN.md` §3.1 and never built. Today, nothing stops:
+Specified in `PLAN.md` §3.1 and never built. Before this, nothing stopped:
 
 - credential stuffing against sign-in (Supabase applies its own limits, but our API does not)
 - a script hammering `POST /lessons/{id}/playback` to mint OTPs
@@ -52,16 +52,39 @@ comfortably (§4), so a shared store buys nothing and adds a dependency, a failu
 monthly bill. Keep the limiter behind a small interface so it becomes Redis-backed the day a
 second instance exists.
 
-Limits worth setting: playback grants 30/min/user, quiz submissions 10/min/user, enrollment
-10/min/user, and a global per-IP ceiling for unauthenticated routes.
+**Built** in `app/security/ratelimit.py`: a token bucket behind a `RateLimiter` protocol, with
+`InMemoryRateLimiter` in production and `NullRateLimiter` for tests that deliberately hammer an
+endpoint. Applied as a route dependency (`app/security/deps.py::rate_limit`) to playback grants,
+progress heartbeats, quiz attempts, assignment submissions and enrollment.
 
-### 3.2 JWKS fetch is a single point of failure
+Ceilings, per user per minute (`Limits`): progress 40, playback 30, quiz attempts 10, assignment
+submissions 10, enrollment 10, admin writes 120. All well above honest use — a limiter that trips
+on ordinary behaviour gets switched off, which is worse than not having one.
 
-With asymmetric keys, `PyJWKClient` fetches the key set on first use. If that fetch fails,
-**every authenticated request fails** — the service is down while the database is healthy.
+Two decisions worth recording:
 
-Fix: keep the last good key set and serve from it when a refresh fails, and log loudly. Small
-change, removes a whole outage class.
+- **Keyed by user, not IP.** A campus or office NAT puts many students behind one address;
+  limiting them as one punishes the innocent ones. Sign-in and password reset are unauthenticated
+  and therefore have no user to key on — those stay with Supabase, which rate-limits them itself.
+- **A refusal is actionable.** 429 carries `Retry-After`, `X-RateLimit-Limit` and
+  `X-RateLimit-Remaining`, so a client waits the right amount instead of retrying into the wall.
+
+Set `RATE_LIMIT_ENABLED=false` to switch it off; buckets are pruned lazily so a long-running
+process does not accumulate one record per user per route forever.
+
+### 3.2 JWKS fetch is a single point of failure ✅ fixed
+
+With asymmetric keys, `PyJWKClient` fetches the key set on first use. If that fetch failed,
+**every authenticated request failed** — the service down while the database was healthy, nothing
+in the application actually broken.
+
+**Fixed** by `ResilientJWKClient` in `app/security/jwt.py`: keys that have verified a token before
+are kept per `kid`, and when a fetch fails the last good one is served with a loud `WARNING`. Loud
+matters — requests keep succeeding, so silence would hide the outage until keys rotate and then
+everything fails at once.
+
+A `kid` never seen before still fails closed. Serving a key from nowhere would mean accepting
+tokens we cannot verify, which is the opposite of the point.
 
 ### 3.3 MFA for admin accounts
 
@@ -172,9 +195,9 @@ Ordered by value per unit of effort. Items 1–2 are configuration and cost noth
 3. Confirm the pooled connection string (port 6543) and `DATABASE_POOL_MAX=10`.
 
 ### Phase 2 — the auth gaps (small, contained)
-4. Rate limiting, in-process, behind an interface (§3.1).
-5. JWKS last-good-key fallback (§3.2).
-6. TOTP for admin sign-in (§3.3).
+4. ~~Rate limiting, in-process, behind an interface (§3.1).~~ **Done.**
+5. ~~JWKS last-good-key fallback (§3.2).~~ **Done.**
+6. TOTP for admin sign-in (§3.3). Still open.
 
 ### Phase 3 — prove and hold the number
 7. **Timing middleware**: record duration per route, log anything over 200ms with the route

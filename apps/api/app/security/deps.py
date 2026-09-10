@@ -15,6 +15,7 @@ The division of labour, restated because it is easy to get wrong:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
@@ -26,6 +27,7 @@ from app.db import Database
 from app.providers.video.base import VideoProvider
 from app.repositories import learning
 from app.security.jwt import InvalidToken, TokenClaims, bearer_token, verify_token
+from app.security.ratelimit import RateLimiter
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,39 @@ async def require_admin(
     if role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin only")
     return user
+
+
+def rate_limit(name: str, limit: int) -> Callable[..., Awaitable[None]]:
+    """A per-user ceiling on one route.
+
+    Keyed by user rather than IP: several students behind one office or campus
+    NAT share an address, and limiting them as one would punish the innocent
+    ones. Unauthenticated routes are not covered here — Supabase applies its own
+    limits to sign-in and password reset.
+    """
+
+    async def dependency(
+        request: Request,
+        user: Annotated[CurrentUser, Depends(current_user)],
+    ) -> None:
+        limiter: RateLimiter = request.app.state.rate_limiter
+        window = request.app.state.rate_limit_window
+        decision = limiter.check(f"{name}:{user.user_id}", limit=limit, window_seconds=window)
+
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="too many requests; slow down",
+                # Retry-After tells a well-behaved client exactly how long to
+                # wait, instead of leaving it to guess and retry into the wall.
+                headers={
+                    "Retry-After": str(decision.retry_after),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+
+    return dependency
 
 
 @dataclass(frozen=True, slots=True)

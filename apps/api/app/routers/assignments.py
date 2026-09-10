@@ -11,16 +11,19 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from app.repositories import admin as admin_repo
 from app.repositories import assessment as repo
 from app.repositories import learning
-from app.security.deps import AdminDep, CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.security.deps import AdminDep, CurrentUserDep, DatabaseDep, rate_limit, resolve_entitlement
+from app.security.ratelimit import Limits
 from app.services import completion
 
 router = APIRouter(tags=["assignments"])
+
+_limit = rate_limit("assignment_submission", Limits().assignment_submissions)
 
 
 class SubmitRequest(BaseModel):
@@ -77,7 +80,11 @@ async def get_assignment(
     }
 
 
-@router.post("/assignments/{assignment_id}/submissions", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/assignments/{assignment_id}/submissions",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_limit)],
+)
 async def submit(
     assignment_id: UUID,
     payload: SubmitRequest,

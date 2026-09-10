@@ -15,14 +15,18 @@ Supabase project entirely.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 from uuid import UUID
 
 import jwt
 from jwt import PyJWKClient
 
 from app.config import Settings
+
+logger = logging.getLogger("lms.auth")
 
 
 class InvalidToken(Exception):
@@ -39,10 +43,61 @@ class TokenClaims:
     claimed_role: str
 
 
+class ResilientJWKClient:
+    """A JWKS client that survives the key server being briefly unreachable.
+
+    Without this, a failed key fetch fails *every* authenticated request — the
+    service is down while the database is perfectly healthy, and nothing in the
+    application is actually broken. Since signing keys rotate rarely and a key
+    we have already verified against stays valid, the right behaviour during an
+    outage is to keep using the last good one and complain loudly.
+
+    A key we have never seen still fails: serving an unknown key from nowhere
+    would mean accepting tokens we cannot verify, which is the opposite of the
+    point.
+    """
+
+    def __init__(self, jwks_url: str) -> None:
+        self._client = PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+        self._last_good: dict[str, Any] = {}
+
+    def signing_key_for(self, token: str) -> Any:
+        try:
+            key = self._client.get_signing_key_from_jwt(token)
+        except Exception as exc:
+            kid = self._kid(token)
+            cached = self._last_good.get(kid) if kid else None
+            if cached is None:
+                raise
+            # Loud, because this is a real upstream problem even though requests
+            # keep succeeding. Silence here would hide an outage until keys
+            # rotate and everything fails at once.
+            logger.warning(
+                "JWKS fetch failed (%s); serving the last known key for kid=%s",
+                type(exc).__name__,
+                kid,
+            )
+            return cached
+
+        kid = self._kid(token)
+        if kid:
+            self._last_good[kid] = key.key
+        return key.key
+
+    @staticmethod
+    def _kid(token: str) -> str | None:
+        try:
+            header = jwt.get_unverified_header(token)
+        except jwt.InvalidTokenError:
+            return None
+        kid = header.get("kid")
+        return kid if isinstance(kid, str) else None
+
+
 @lru_cache(maxsize=4)
-def _jwk_client(jwks_url: str) -> PyJWKClient:
-    # PyJWKClient caches fetched keys internally; one client per URL is enough.
-    return PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+def _jwk_client(jwks_url: str) -> ResilientJWKClient:
+    # One client per URL; it holds the key cache and the last-good fallback.
+    return ResilientJWKClient(jwks_url)
 
 
 def _decode(token: str, settings: Settings) -> dict[str, object]:
@@ -60,10 +115,10 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
             options=options,
         )
 
-    signing_key = _jwk_client(f"{issuer}/.well-known/jwks.json").get_signing_key_from_jwt(token)
+    signing_key = _jwk_client(f"{issuer}/.well-known/jwks.json").signing_key_for(token)
     return jwt.decode(
         token,
-        signing_key.key,
+        signing_key,
         algorithms=["RS256", "ES256"],
         audience=settings.jwt_audience,
         issuer=issuer,

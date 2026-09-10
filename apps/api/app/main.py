@@ -23,6 +23,7 @@ from app.routers import (
     quizzes,
     video,
 )
+from app.security.ratelimit import InMemoryRateLimiter, Limits, NullRateLimiter
 
 logger = logging.getLogger("lms")
 
@@ -57,6 +58,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if settings.is_production else "/openapi.json",
     )
     app.state.settings = settings
+    limits = Limits()
+    app.state.rate_limits = limits
+    app.state.rate_limit_window = limits.window_seconds
+    app.state.rate_limiter = (
+        InMemoryRateLimiter() if settings.rate_limit_enabled else NullRateLimiter()
+    )
 
     app.add_middleware(
         CORSMiddleware,

@@ -13,15 +13,18 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.domain import grading
 from app.repositories import learning
-from app.security.deps import CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.security.deps import CurrentUserDep, DatabaseDep, rate_limit, resolve_entitlement
+from app.security.ratelimit import Limits
 from app.services import completion
 
 router = APIRouter(prefix="/quizzes", tags=["quizzes"])
+
+_limit = rate_limit("quiz_attempt", Limits().quiz_attempts)
 
 
 class QuizView(BaseModel):
@@ -113,7 +116,11 @@ async def get_quiz(quiz_id: UUID, user: CurrentUserDep, database: DatabaseDep) -
     )
 
 
-@router.post("/{quiz_id}/attempts", response_model=AttemptResultView)
+@router.post(
+    "/{quiz_id}/attempts",
+    response_model=AttemptResultView,
+    dependencies=[Depends(_limit)],
+)
 async def submit_attempt(
     quiz_id: UUID,
     payload: SubmitRequest,

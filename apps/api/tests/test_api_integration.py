@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.config import Settings
 from app.main import create_app
+from app.security.ratelimit import Limits
 from tests.conftest import ALICE, token_for
 
 pytestmark = pytest.mark.anyio
@@ -390,3 +391,67 @@ class TestQuizzes:
             assert second.status_code == 409
         finally:
             await conn.execute("update quizzes set max_attempts = null where id = $1", quiz)
+
+
+class TestRateLimiting:
+    """The limiter through the real app, not just the arithmetic.
+
+    Unit tests cover the bucket (tests/test_ratelimit.py); what matters here is
+    that it is actually wired to a route, keyed per user, and answers with
+    something a client can act on.
+    """
+
+    async def test_a_flood_of_heartbeats_is_refused(
+        self, client: AsyncClient, conn, alice_auth
+    ) -> None:
+        target = await lesson_id(conn, "going-deeper")
+        limit = Limits().progress
+        body = {"watched_seconds": 1, "position_seconds": 1}
+
+        for i in range(limit):
+            ok = await client.post(
+                f"/api/lessons/{target}/progress", headers=alice_auth, json=body
+            )
+            assert ok.status_code == 200, f"request {i + 1} of {limit} was refused"
+
+        refused = await client.post(
+            f"/api/lessons/{target}/progress", headers=alice_auth, json=body
+        )
+        assert refused.status_code == 429
+        # The headers are what separates a limiter from a mystery: a client can
+        # read how long to wait instead of retrying into the wall. They also
+        # distinguish this 429 from the concurrent-session cap, which sends none.
+        assert int(refused.headers["Retry-After"]) >= 1
+        assert refused.headers["X-RateLimit-Limit"] == str(limit)
+        assert refused.headers["X-RateLimit-Remaining"] == "0"
+
+    async def test_one_student_hitting_the_ceiling_does_not_block_another(
+        self, client: AsyncClient, conn, alice_auth, bob_auth
+    ) -> None:
+        """Keyed per user, not per address -- a campus NAT must not mean that one
+        impatient student locks out everyone sharing the building's IP."""
+        target = await lesson_id(conn, "going-deeper")
+        body = {"watched_seconds": 1, "position_seconds": 1}
+        for _ in range(Limits().progress + 1):
+            await client.post(f"/api/lessons/{target}/progress", headers=alice_auth, json=body)
+
+        preview = await lesson_id(conn, "welcome")
+        other = await client.post(
+            f"/api/lessons/{preview}/progress", headers=bob_auth, json=body
+        )
+        # Bob is refused for not being enrolled, which is the pre-existing
+        # behaviour -- the point is that Alice's flood did not touch his bucket.
+        assert other.status_code != 429
+
+    async def test_the_concurrent_session_cap_is_not_the_rate_limiter(
+        self, client: AsyncClient, conn, alice_auth
+    ) -> None:
+        """Two 429s with different causes. If the playback cap ever started
+        firing as a rate limit, the earlier cap test would still pass and the
+        real bug would be invisible."""
+        target = await lesson_id(conn, "going-deeper")
+        for _ in range(2):
+            await client.post(f"/api/lessons/{target}/playback", headers=alice_auth)
+        capped = await client.post(f"/api/lessons/{target}/playback", headers=alice_auth)
+        assert capped.status_code == 429
+        assert "X-RateLimit-Limit" not in capped.headers

@@ -10,15 +10,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.domain import progress as domain
 from app.repositories import learning
-from app.security.deps import CurrentUserDep, DatabaseDep, resolve_entitlement
+from app.security.deps import CurrentUserDep, DatabaseDep, rate_limit, resolve_entitlement
+from app.security.ratelimit import Limits
 from app.services import completion
 
 router = APIRouter(prefix="/lessons", tags=["progress"])
+
+_limit = rate_limit("progress", Limits().progress)
 
 
 class HeartbeatRequest(BaseModel):
@@ -37,7 +40,11 @@ class ProgressResponse(BaseModel):
     course_completed: bool
 
 
-@router.post("/{lesson_id}/progress", response_model=ProgressResponse)
+@router.post(
+    "/{lesson_id}/progress",
+    response_model=ProgressResponse,
+    dependencies=[Depends(_limit)],
+)
 async def record_progress(
     lesson_id: UUID,
     payload: HeartbeatRequest,
@@ -109,7 +116,11 @@ async def record_progress(
     )
 
 
-@router.post("/{lesson_id}/complete", response_model=ProgressResponse)
+@router.post(
+    "/{lesson_id}/complete",
+    response_model=ProgressResponse,
+    dependencies=[Depends(_limit)],
+)
 async def mark_complete(
     lesson_id: UUID,
     user: CurrentUserDep,
