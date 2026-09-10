@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { adminFetch } from "@/lib/admin-client";
 import type { PlaybackGrant } from "@/lib/api";
 
-const HEARTBEAT_SECONDS = 20;
+// Short enough that the bar visibly moves during a lesson, long enough not to
+// chatter. Pausing and ending flush regardless.
+const HEARTBEAT_SECONDS = 10;
 //: A timeupdate gap larger than this is a seek, not playback.
 const MAX_TICK_SECONDS = 2;
 
@@ -166,9 +168,15 @@ export function VideoPlayer({
         accumulate(el.currentTime);
         void beat(watched.current, el.currentTime);
       }}
+      onPause={(event) => {
+        // Flush on pause: someone who watches four minutes and stops should see
+        // that reflected, not lose it to the throttle.
+        const el = event.currentTarget;
+        lastSent.current = 0;
+        void beat(watched.current, el.currentTime);
+      }}
       onEnded={(event) => {
         const el = event.currentTarget;
-        // Flush the tail of the last interval rather than losing up to 20s.
         lastSent.current = 0;
         void beat(watched.current, el.currentTime);
       }}

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.domain.progress import course_progress_percent, is_course_complete
+from app.domain.progress import fractional_progress_percent, is_course_complete
 from app.repositories import learning
 
 
@@ -32,7 +32,11 @@ async def recompute(
 ) -> CourseStanding:
     counts = await learning.get_completion_counts(conn, course_id, user_id)  # type: ignore[arg-type]
 
-    percent = course_progress_percent(counts.required_total, counts.required_completed)
+    # Fractional, so a part-watched video shows as part of the bar. Completion
+    # below still counts whole lessons -- a certificate is not issued on 99%.
+    percent = fractional_progress_percent(
+        counts.required_total, float(counts.required_credit)
+    )
     completed = is_course_complete(
         required_total=counts.required_total,
         required_completed=counts.required_completed,

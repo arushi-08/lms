@@ -178,6 +178,46 @@ def course_progress_percent(required_total: int, required_completed: int) -> flo
     return round(ratio * 100, 2)
 
 
+def partial_lesson_credit(
+    *,
+    completed: bool,
+    lesson_type: str,
+    watched_seconds: int,
+    duration_seconds: int | None,
+    threshold_percent: int,
+) -> float:
+    """How much of one lesson counts, between 0 and 1.
+
+    Progress used to be a count of finished lessons, which meant watching most
+    of a video showed nothing at all and the bar only ever jumped. A student
+    doing the work deserves to see it.
+
+    Only video lessons earn partial credit -- they are the only ones with a
+    meaningful fraction. A quiz is passed or not; an assignment is graded or
+    not; a text lesson is read or not.
+
+    Unfinished video is capped just below 1 so the bar cannot read 100% while a
+    lesson is still open. The certificate rule is unaffected: it counts
+    completions, never this.
+    """
+    if completed:
+        return 1.0
+    if lesson_type != "video" or not duration_seconds:
+        return 0.0
+
+    target = completion_target(duration_seconds, threshold_percent)
+    if target <= 0:
+        return 0.0
+    return min(0.99, max(0.0, watched_seconds / target))
+
+
+def fractional_progress_percent(required_total: int, credit: float) -> float:
+    """Course percentage from summed per-lesson credit."""
+    if required_total <= 0:
+        return 0.0
+    return round(min(credit, required_total) / required_total * 100, 2)
+
+
 def is_course_complete(
     *,
     required_total: int,

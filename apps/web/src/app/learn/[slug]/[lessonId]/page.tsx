@@ -50,6 +50,21 @@ export default async function LearnPage({
   if (index === -1) notFound();
   const lesson = ordered[index]!;
 
+  // Seed the bar and the lesson ticks from stored state, so the sidebar is
+  // right on arrival rather than only after the first heartbeat.
+  const [{ data: enrollment }, { data: progressRows }] = await Promise.all([
+    supabase
+      .from("enrollments")
+      .select("progress_percent")
+      .eq("course_id", course.id)
+      .maybeSingle(),
+    supabase.from("lesson_progress").select("lesson_id,completed"),
+  ]);
+
+  const completedLessonIds = new Set(
+    (progressRows ?? []).filter((row) => row.completed).map((row) => row.lesson_id),
+  );
+
   // Assessment content comes from the API rather than straight from Supabase:
   // the quiz payload has to be assembled with the answer key stripped, and the
   // assignment payload carries this student's own submission history.
@@ -80,6 +95,8 @@ export default async function LearnPage({
         courseSlug={course.slug}
         lessons={ordered}
         currentIndex={index}
+        initialPercent={enrollment?.progress_percent ?? 0}
+        completedLessonIds={[...completedLessonIds]}
         quiz={quiz}
         assignment={assignment}
         assessmentError={assessmentError}

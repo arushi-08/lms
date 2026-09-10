@@ -260,8 +260,12 @@ class TestProgress:
             json={"watched_seconds": 30, "position_seconds": 30},
         )
         body = response.json()
-        # Six required lessons in the seed, one of them complete.
-        assert body["course_progress_percent"] == pytest.approx(16.67, abs=0.01)
+        # Six required lessons in the seed, one complete and one part-watched.
+        # The part-watched one contributes its fraction, which is the point:
+        # a bar that only moved on completion showed nothing for most of the
+        # time a student spends actually watching.
+        assert body["course_progress_percent"] > 16.67
+        assert body["course_progress_percent"] < 20.0
         assert body["course_completed"] is False
 
 

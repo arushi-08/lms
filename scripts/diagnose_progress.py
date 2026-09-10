@@ -149,14 +149,25 @@ async def main(email: str, slug: str) -> int:
 
         required = [r for r in rows if r["is_required"]]
         complete = [r for r in required if r["completed"]]
-        expected = round(len(complete) / len(required) * 100, 2) if required else 0.0
+
+        # The bar is fractional: a part-watched video counts as the share of its
+        # target actually watched, so the stored value legitimately sits above a
+        # plain count of finished lessons.
+        credit = 0.0
+        for row in required:
+            if row["completed"]:
+                credit += 1.0
+            elif row["type"] == "video" and row["duration_seconds"]:
+                target = -(-row["duration_seconds"] * course["completion_threshold"] // 100)
+                credit += min(0.99, (row["watched_seconds"] or 0) / max(target, 1))
+        expected = round(credit / len(required) * 100, 2) if required else 0.0
 
         print("-" * 96)
-        print(f"\n{len(complete)} of {len(required)} required lessons complete "
-              f"-> {expected}%")
-        if abs(float(enrollment["progress_percent"]) - expected) > 0.01:
+        print(f"\n{len(complete)} of {len(required)} required lessons complete; "
+              f"with part-watched video counted, the bar should read {expected}%")
+        if abs(float(enrollment["progress_percent"]) - expected) > 0.5:
             print(f"stored progress is {enrollment['progress_percent']}%, which disagrees. "
-                  "Complete any lesson to force a recompute.")
+                  "Watch or complete anything to force a recompute.")
 
         if blockers:
             print("\nblocking 100%:")

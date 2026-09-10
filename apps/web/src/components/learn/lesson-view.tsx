@@ -31,6 +31,8 @@ export function LessonView({
   quiz = null,
   assignment = null,
   assessmentError = null,
+  initialPercent = 0,
+  completedLessonIds = [],
 }: {
   courseSlug: string;
   lessons: Lesson[];
@@ -38,10 +40,13 @@ export function LessonView({
   quiz?: Quiz | null;
   assignment?: Assignment | null;
   assessmentError?: string | null;
+  initialPercent?: number;
+  completedLessonIds?: string[];
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [percent, setPercent] = useState<number | null>(null);
+  const [percent, setPercent] = useState<number>(initialPercent);
+  const done = new Set(completedLessonIds);
   const [marking, setMarking] = useState(false);
   const [markError, setMarkError] = useState<string | null>(null);
   const lesson = lessons[currentIndex];
@@ -134,14 +139,12 @@ export function LessonView({
           </div>
         ) : null}
 
-        {percent !== null ? (
-          <div className="mt-4 flex items-center gap-3">
-            <Progress value={percent} label="Course progress" className="max-w-xs" />
-            <span className="text-xs tabular-nums text-subtle">
-              {Math.round(percent)}% of the course
-            </span>
-          </div>
-        ) : null}
+        <div className="mt-5 flex items-center gap-3">
+          <Progress value={percent} label="Course progress" className="max-w-xs" />
+          <span className="text-xs tabular-nums text-subtle">
+            {percent.toFixed(0)}% of the course
+          </span>
+        </div>
 
         <div className="mt-6 flex items-center justify-between gap-3">
           {previous ? (
@@ -180,9 +183,22 @@ export function LessonView({
                         : "text-muted hover:bg-surface-hover hover:text-text")
                     }
                   >
-                    <span className="w-4 shrink-0 text-xs tabular-nums opacity-70">
-                      {item.position}
-                    </span>
+                    {done.has(item.id) ? (
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="size-4 shrink-0 text-success"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        aria-label="Completed"
+                      >
+                        <path d="m4 12 5 5L20 6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : (
+                      <span className="w-4 shrink-0 text-xs tabular-nums opacity-70">
+                        {item.position}
+                      </span>
+                    )}
                     <span className="truncate">{item.title}</span>
                   </Link>
                 </li>

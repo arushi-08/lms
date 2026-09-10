@@ -255,6 +255,27 @@ File upload on assignments. The column exists so adding it is not a migration of
 rows, but it needs Supabase Storage plus virus scanning and quota handling — a larger piece
 than it looks. Links cover the common case meanwhile.
 
+## How the progress bar moves
+
+Two different questions, deliberately answered differently.
+
+**The percentage is fractional.** A part-watched video counts as the share of its target
+actually watched, so the bar climbs while a lesson is in progress. It used to be a count of
+finished lessons, which meant watching most of a video showed nothing at all and the bar only
+ever jumped — a student doing the work could not see it.
+
+An unfinished video is capped just below its full share, so the bar can never read 100% with
+a lesson still open. Only video earns partial credit: a quiz is passed or not, an assignment
+is graded or not, a text lesson is read or not.
+
+**Completion is not fractional.** The certificate rule counts whole lessons, so 99% is not a
+pass. See the table below.
+
+**Skipping does not count.** Only forward movement of about one playback tick is credited, so
+dragging the scrub bar to the end earns nothing. That is intentional — otherwise the scrub
+bar is a fast-forward to a certificate — but it does mean skimming a video shows little
+movement. Watching it does.
+
 ## How a lesson completes
 
 Nothing else moves the progress bar, so each type needs a path:

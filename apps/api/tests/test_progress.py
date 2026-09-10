@@ -14,8 +14,10 @@ from app.domain.progress import (
     apply_heartbeat,
     completion_target,
     course_progress_percent,
+    fractional_progress_percent,
     is_course_complete,
     mark_complete,
+    partial_lesson_credit,
     resolve_expiry,
 )
 
@@ -285,3 +287,78 @@ class TestAssignmentsInCompletion:
         assert is_course_complete(
             required_total=1, required_completed=1, quizzes_total=0, quizzes_passed=0
         )
+
+
+class TestPartialCredit:
+    """The bar has to move while a lesson is being watched, not only after."""
+
+    def test_part_watched_video_earns_part_credit(self) -> None:
+        credit = partial_lesson_credit(
+            completed=False,
+            lesson_type="video",
+            watched_seconds=270,
+            duration_seconds=600,
+            threshold_percent=90,
+        )
+        # 270s of the 540s target.
+        assert credit == pytest.approx(0.5, abs=0.01)
+
+    def test_unfinished_video_never_reads_as_whole(self) -> None:
+        # Otherwise the bar could show 100% with a lesson still open.
+        credit = partial_lesson_credit(
+            completed=False,
+            lesson_type="video",
+            watched_seconds=10_000,
+            duration_seconds=600,
+            threshold_percent=90,
+        )
+        assert credit == 0.99
+
+    def test_completed_lesson_is_whole(self) -> None:
+        assert (
+            partial_lesson_credit(
+                completed=True,
+                lesson_type="video",
+                watched_seconds=0,
+                duration_seconds=600,
+                threshold_percent=90,
+            )
+            == 1.0
+        )
+
+    @pytest.mark.parametrize("lesson_type", ["quiz", "assignment", "text"])
+    def test_only_video_earns_partial_credit(self, lesson_type: str) -> None:
+        # A quiz is passed or not; there is no meaningful fraction of one.
+        assert (
+            partial_lesson_credit(
+                completed=False,
+                lesson_type=lesson_type,
+                watched_seconds=500,
+                duration_seconds=600,
+                threshold_percent=90,
+            )
+            == 0.0
+        )
+
+    def test_video_without_duration_earns_nothing_yet(self) -> None:
+        assert (
+            partial_lesson_credit(
+                completed=False,
+                lesson_type="video",
+                watched_seconds=300,
+                duration_seconds=None,
+                threshold_percent=90,
+            )
+            == 0.0
+        )
+
+    def test_percentage_from_summed_credit(self) -> None:
+        assert fractional_progress_percent(4, 2.5) == 62.5
+        assert fractional_progress_percent(4, 0.0) == 0.0
+        assert fractional_progress_percent(4, 4.0) == 100.0
+
+    def test_percentage_cannot_exceed_one_hundred(self) -> None:
+        assert fractional_progress_percent(2, 5.0) == 100.0
+
+    def test_empty_course_is_still_zero(self) -> None:
+        assert fractional_progress_percent(0, 0.0) == 0.0

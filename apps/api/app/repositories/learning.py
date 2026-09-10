@@ -187,11 +187,18 @@ class CourseCompletionCounts:
     quizzes_passed: int
     graded_assignments_total: int
     graded_assignments_passed: int
+    #: Summed per-lesson credit across required lessons, where a part-watched
+    #: video counts as the fraction of its target actually watched. Drives the
+    #: displayed percentage; completion still counts whole lessons.
+    required_credit: float
 
 
 _COMPLETION_COUNTS_SQL = """
-with course_lessons as (
-    select l.id, l.is_required
+with course_threshold as (
+    select completion_threshold from courses where id = $1
+),
+course_lessons as (
+    select l.id, l.is_required, l.type::text as type, l.duration_seconds
     from lessons l
     join modules m on m.id = l.module_id
     where m.course_id = $1
@@ -218,7 +225,27 @@ select
     (select count(distinct s.assignment_id) from assignment_submissions s
       where s.user_id = $2 and s.passed
         and s.assignment_id in (select id from course_assignments))
-        as graded_assignments_passed
+        as graded_assignments_passed,
+    -- Partial credit for video in progress, so the bar moves while a lesson is
+    -- still being watched instead of jumping only on completion.
+    (select coalesce(sum(
+        case
+          when lp.completed then 1.0
+          when cl.type = 'video' and coalesce(cl.duration_seconds, 0) > 0 then
+            least(
+              0.99,
+              coalesce(lp.watched_seconds, 0)::numeric
+                / greatest(
+                    ceil(cl.duration_seconds
+                         * (select completion_threshold from course_threshold) / 100.0),
+                    1)
+            )
+          else 0
+        end), 0)
+      from course_lessons cl
+      left join lesson_progress lp on lp.lesson_id = cl.id and lp.user_id = $2
+      where cl.is_required)
+        as required_credit
 """
 
 
