@@ -48,3 +48,30 @@ create or replace function auth.jwt()
 returns jsonb language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
 $$;
+
+-- GoTrue's MFA factor table, enough of it for 0012's trigger to be real.
+-- The enum types are declared with the same names GoTrue uses, and the trigger
+-- casts to text rather than comparing enum values, so a rename upstream shows up
+-- as a test failure here rather than a silent mismatch in production.
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'factor_type'
+                   and typnamespace = 'auth'::regnamespace) then
+    create type auth.factor_type as enum ('totp', 'webauthn', 'phone');
+  end if;
+  if not exists (select 1 from pg_type where typname = 'factor_status'
+                   and typnamespace = 'auth'::regnamespace) then
+    create type auth.factor_status as enum ('unverified', 'verified');
+  end if;
+end
+$$;
+
+create table if not exists auth.mfa_factors (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  friendly_name text,
+  factor_type  auth.factor_type not null default 'totp',
+  status       auth.factor_status not null default 'unverified',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);

@@ -123,6 +123,11 @@ jobs:
         # it. Cheap to assert, expensive to debug.
         run: node scripts/check-csp.mjs
 
+      - name: Post-sign-in redirect guard
+        # An open redirect on a login page is not a broken page, it is a working
+        # phishing chain: our domain, our form, someone else's next screen.
+        run: node scripts/check-redirects.mjs
+
       - name: Build
         # Placeholders only. src/lib/env.ts throws on a missing variable, which
         # is the point -- a real deploy with unset config fails at build rather
@@ -153,7 +158,24 @@ jobs:
             echo "::error::a JWT-shaped string is committed to the repository"
             exit 1
           fi
-          if git grep -nIE '(SUPABASE_SERVICE_ROLE_KEY|VDOCIPHER_API_SECRET|STRIPE_SECRET_KEY)[[:space:]]*=[[:space:]]*[^[:space:]"'"'"']+' \
+
+          # The value has to look like a credential rather than like
+          # documentation. Two lessons are baked into this pattern:
+          #
+          # "anything that is not whitespace" also matched the placeholder in the
+          # usage text of scripts/set_password.py, so this job failed on every
+          # push -- long enough that a red tick here stopped meaning anything. A
+          # scanner nobody believes is worse than no scanner.
+          #
+          # And it never matched `KEY = "sk_live_..."`, because the value it
+          # required could not start with a quote -- which is the single most
+          # likely way a key actually gets committed, straight into source.
+          #
+          # So: an optional opening quote, then at least twelve credential
+          # characters. A real key is that. `<service role key>`, `${VAR}`,
+          # `changeme` and an empty value are not.
+          assigned='[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_+/.-]{12,}'
+          if git grep -nIE "(SUPABASE_SERVICE_ROLE_KEY|VDOCIPHER_API_SECRET|STRIPE_SECRET_KEY)$assigned" \
                -- . ':(exclude)*.md' ':(exclude)*.example'; then
             echo "::error::a secret appears to be assigned a value in a tracked file"
             exit 1

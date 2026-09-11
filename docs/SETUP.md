@@ -60,7 +60,47 @@ provider and a local Postgres — but each item unblocks the next slice.
 9. Auth settings worth changing from the defaults: require email confirmation, minimum
    password length 10, enable the leaked-password check, turn on Turnstile captcha.
 
-10. **Verify from outside.** With the project reachable from your machine:
+10. **Enable MFA (TOTP).** Authentication → Multi-Factor Authentication → enable
+   **App Authenticator (TOTP)**, and set *Maximum enrolled factors* to **1**.
+
+   Both matter. Without TOTP enabled, enrollment fails and every admin is locked out
+   of the admin area, because admin access requires a second factor. And the
+   maximum of one is the setting that makes the pin check cheap: admin access
+   requires the account's verified factors to be exactly the one it was set up with,
+   so a second enrolled factor blocks admin access rather than adding a key. Capping
+   it at one turns that from a refusal into an error at the moment of enrollment,
+   which is a much better place to find out.
+
+   Then, while signed in as the admin, go to `/account/security` in the app and set
+   up an authenticator. The first one verified becomes the trusted one. See
+   *Admin two-factor authentication* below for what happens when it is lost.
+
+11. **Enable Google sign-in** (optional, but this is what students will use).
+
+   In Google Cloud Console → APIs & Services → Credentials → *Create credentials* →
+   *OAuth client ID* → **Web application**:
+   - Authorised JavaScript origins: `http://localhost:3000`, plus your real domain.
+   - Authorised redirect URI: **`https://<ref>.supabase.co/auth/v1/callback`** —
+     Supabase's callback, not your app's. Google redirects to Supabase, Supabase
+     redirects to `/auth/callback` in the app. Putting your own domain here is the
+     usual mistake and produces `redirect_uri_mismatch`.
+
+   Then in Supabase → Authentication → Providers → Google: enable it and paste the
+   client ID and secret. The *Callback URL* shown there is the value to give Google.
+
+   Also fill in the OAuth consent screen (app name, support email, logo). Until it is
+   configured, Google shows an unverified-app warning that reads as a security
+   problem to students.
+
+   Nothing in `.env` changes — the provider is configured in Supabase, and the app
+   only asks for `provider: "google"`.
+
+   One consequence worth knowing: if a student already has a password account with
+   the same **verified** address, Supabase links the Google identity to it rather
+   than creating a second account. That is the behaviour you want, and it is also why
+   the provider has to be one that verifies email addresses.
+
+12. **Verify from outside.** With the project reachable from your machine:
    ```bash
    export SUPABASE_URL=https://<ref>.supabase.co
    export SUPABASE_ANON_KEY=<anon key>
@@ -125,6 +165,37 @@ Not in the pilot. Payments are out of scope until the entity is approved (`PLAN.
 Worth starting the application now regardless, since approval is the long pole.
 
 ---
+
+## Admin two-factor authentication
+
+Admin access needs three things, checked on every request: the `admin` role in the
+database, a session that presented a TOTP code (`aal2` in the token), and the account's
+verified factors being *exactly* the authenticator it was first set up with.
+
+The third one is the unusual one, so: an attacker who has an admin's password can enroll
+their own authenticator and step up with it, and Supabase will issue them a perfectly
+genuine `aal2` token. Requiring the factor set to still match what was pinned is what
+makes that fail. The consequence is that a second enrolled authenticator **closes** admin
+access rather than adding a way in — which is why *Maximum enrolled factors* should be 1.
+
+- **Switching phones**, old one still in hand: `/account/security` → *Start replacing it*.
+  Admin access closes until the new authenticator is enrolled. That is deliberate.
+- **Lost the phone**: nobody can fix this from the app, because "I lost my second factor"
+  is exactly what an attacker would say. Someone with the database connection string runs:
+  ```bash
+  cd apps/api && . .venv/bin/activate
+  export DATABASE_URL=<the value in apps/api/.env>
+  python ../../scripts/reset_admin_mfa.py you@example.com            # show state
+  python ../../scripts/reset_admin_mfa.py you@example.com --confirm  # reset
+  ```
+  Then sign in and enroll a new authenticator immediately — between those two steps the
+  account has only its password, which is the state this all exists to avoid.
+- **"The authenticator on this account is not the one it was set up with"**: an extra
+  factor exists. If you did not add it, remove it at `/account/security` and change the
+  password — someone else knew it.
+
+Every change to the factor set is written to `audit_log` (`mfa.factors_changed`,
+`mfa.rotation_started`, `mfa.reset_by_operator`), which is insert-only.
 
 ## Troubleshooting sign-in
 

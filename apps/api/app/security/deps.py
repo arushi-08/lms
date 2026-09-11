@@ -15,6 +15,7 @@ The division of labour, restated because it is easy to get wrong:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
@@ -26,8 +27,17 @@ from app.config import Settings
 from app.db import Database
 from app.providers.video.base import VideoProvider
 from app.repositories import learning
-from app.security.jwt import InvalidToken, TokenClaims, bearer_token, verify_token
+from app.security.jwt import (
+    AAL_MULTI_FACTOR,
+    AAL_SINGLE_FACTOR,
+    InvalidToken,
+    TokenClaims,
+    bearer_token,
+    verify_token,
+)
 from app.security.ratelimit import RateLimiter
+
+logger = logging.getLogger("lms.auth")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +45,12 @@ class CurrentUser:
     user_id: UUID
     email: str
     claimed_role: str
+    #: Assurance level from the token: one factor or two. See jwt.TokenClaims.
+    aal: str = AAL_SINGLE_FACTOR
+
+    @property
+    def stepped_up(self) -> bool:
+        return self.aal == AAL_MULTI_FACTOR
 
 
 def get_db(request: Request) -> Database:
@@ -79,19 +95,79 @@ async def current_user(
         ) from exc
 
     return CurrentUser(
-        user_id=claims.user_id, email=claims.email, claimed_role=claims.claimed_role
+        user_id=claims.user_id,
+        email=claims.email,
+        claimed_role=claims.claimed_role,
+        aal=claims.aal,
     )
+
+
+#: Machine-readable reasons an admin request was refused for a second-factor
+#: problem. The UI routes on these, so they are part of the interface: an admin
+#: who has never enrolled needs the setup page, one who signed in with a single
+#: factor needs the challenge page, and the two are not the same screen.
+MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required"
+MFA_REQUIRED = "mfa_required"
+MFA_FACTOR_MISMATCH = "mfa_factor_mismatch"
 
 
 async def require_admin(
     user: Annotated[CurrentUser, Depends(current_user)],
     database: Annotated[Database, Depends(get_db)],
 ) -> CurrentUser:
-    async with database.acquire() as conn:
-        role = await learning.get_profile_role(conn, user.user_id)
+    """Admin, with a second factor, on the authenticator we expect.
 
-    if role != "admin":
+    Four things must hold, and all four are checked here rather than spread
+    across the routes, because a check that has to be remembered eventually is
+    not.
+
+    1. The database -- not the token -- says this account is an admin.
+    2. The account has a pinned TOTP factor. An admin who has never enrolled has
+       no admin powers; the only thing they can do is enroll.
+    3. Its verified factors are *exactly* the pinned one. Passing this is what
+       an attacker cannot arrange by enrolling an authenticator of their own.
+    4. This session presented the second factor (``aal2``). Signing in with
+       Google is one factor like a password is, so this is what stops OAuth from
+       being a way around TOTP for an admin account.
+    """
+    async with database.acquire() as conn:
+        context = await learning.get_admin_context(conn, user.user_id)
+
+    if not context.is_admin:
+        # Nothing about MFA is said here. A student probing admin routes learns
+        # only that they are not an admin.
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin only")
+
+    if not context.has_pinned_factor:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="two-factor authentication is required for admin access",
+            headers={"X-MFA-Status": MFA_ENROLLMENT_REQUIRED},
+        )
+
+    if not context.factors_match_pin:
+        # Either an unexpected authenticator was added, or the trusted one is
+        # gone. Both need a human to look, so neither is a route the request can
+        # talk its way out of.
+        logger.warning(
+            "admin %s has verified factors %s but trusts %s; refusing admin access",
+            user.user_id,
+            [str(f) for f in context.verified_factor_ids],
+            context.pinned_factor_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="the authenticator on this account is not the expected one",
+            headers={"X-MFA-Status": MFA_FACTOR_MISMATCH},
+        )
+
+    if not user.stepped_up:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="confirm your authenticator code to continue",
+            headers={"X-MFA-Status": MFA_REQUIRED},
+        )
+
     return user
 
 
@@ -155,8 +231,12 @@ async def resolve_entitlement(
     if context is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lesson not found")
 
-    role = await learning.get_profile_role(conn, user.user_id)  # type: ignore[arg-type]
-    is_admin = role == "admin"
+    admin = await learning.get_admin_context(conn, user.user_id)  # type: ignore[arg-type]
+    # The same bar as require_admin, not a softer one. Admin here buys a look at
+    # unpublished content, and an admin session that has not presented its second
+    # factor should not get that either -- otherwise "admin powers need TOTP"
+    # would have a quiet exception in the one place it is easiest to miss.
+    is_admin = admin.is_admin and admin.factors_match_pin and user.stepped_up
 
     if context.course_status != "published" and not is_admin:
         # 404 rather than 403: an unpublished course should not be discoverable

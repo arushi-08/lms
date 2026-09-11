@@ -44,12 +44,20 @@ export async function SiteHeader() {
             Courses
           </Link>
           {user ? (
-            <Link
-              href="/dashboard"
-              className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
-            >
-              My learning
-            </Link>
+            <>
+              <Link
+                href="/dashboard"
+                className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
+              >
+                My learning
+              </Link>
+              <Link
+                href="/account/security"
+                className="rounded-md px-2.5 py-1.5 text-sm text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
+              >
+                Security
+              </Link>
+            </>
           ) : null}
           {isAdmin ? (
             <>

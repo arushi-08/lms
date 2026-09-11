@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
+import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
+import { describeSignUpError } from "@/lib/auth-errors";
 import { createClient } from "@/lib/supabase/client";
 
 const MIN_PASSWORD = 10;
@@ -42,9 +44,16 @@ export function SignupForm() {
     });
 
     if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
+      // Supabase's own wording, straight onto the page, is how "User already
+      // registered" turns this form into an account checker.
+      const { message, alreadyRegistered } = describeSignUpError(signUpError);
+      if (!alreadyRegistered) {
+        setError(message);
+        setLoading(false);
+        return;
+      }
+      // Fall through to the confirmation screen: the address is taken, Supabase
+      // has told its owner, and this page says exactly what it says to everyone.
     }
 
     // Always the same confirmation screen, whether or not the address was
@@ -116,6 +125,14 @@ export function SignupForm() {
                 Create account
               </Button>
             </form>
+
+            <div className="mt-4 grid gap-4">
+              <AuthDivider />
+              {/* No email to confirm and no password to choose, so this is the
+                  shorter path -- but it is second, because the form above is
+                  the one that works without a Google account. */}
+              <GoogleButton label="Sign up with Google" />
+            </div>
           </CardBody>
         </Card>
 

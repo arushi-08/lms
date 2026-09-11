@@ -89,6 +89,74 @@ async def get_profile_role(conn: Conn, user_id: UUID) -> str | None:
     return await conn.fetchval("select role::text from profiles where id = $1", user_id)
 
 
+@dataclass(frozen=True, slots=True)
+class AdminContext:
+    """Everything the admin gate needs, in one row.
+
+    Role and second-factor state are read together because the gate needs both
+    on every admin request and neither can be trusted from the token -- the role
+    because a demoted admin keeps a valid token, the factor set because the
+    token says *that* a second factor was used but not *which*.
+    """
+
+    role: str | None
+    #: The factor this account is trusted to use. None means it has never
+    #: verified one.
+    pinned_factor_id: UUID | None
+    #: Every TOTP factor currently verified on the account.
+    verified_factor_ids: tuple[UUID, ...]
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+    @property
+    def has_pinned_factor(self) -> bool:
+        return self.pinned_factor_id is not None
+
+    @property
+    def factors_match_pin(self) -> bool:
+        """True when the account's verified factors are exactly the pinned one.
+
+        Not "the pin is among them". An attacker who has the password can enroll
+        their own authenticator and step up with it, which produces a genuine
+        aal2 token; what it cannot produce is an account whose only verified
+        factor is still the one enrolled first.
+        """
+        return (
+            self.pinned_factor_id is not None
+            and self.verified_factor_ids == (self.pinned_factor_id,)
+        )
+
+
+async def get_admin_context(conn: Conn, user_id: UUID) -> AdminContext:
+    row = await conn.fetchrow(
+        """
+        select role::text as role, mfa_factor_id, mfa_verified_factors
+        from profiles where id = $1
+        """,
+        user_id,
+    )
+    if row is None:
+        return AdminContext(role=None, pinned_factor_id=None, verified_factor_ids=())
+    return AdminContext(
+        role=row["role"],
+        pinned_factor_id=row["mfa_factor_id"],
+        verified_factor_ids=tuple(row["mfa_verified_factors"] or ()),
+    )
+
+
+async def clear_pinned_factor(conn: Conn, user_id: UUID) -> None:
+    """Un-pin, so the next factor verified becomes the trusted one.
+
+    This is how an admin moves to a new phone. It is reachable only from a
+    request that has already satisfied the full admin gate, which means the
+    caller has just used the current factor -- so consenting to replace it is
+    exactly the authority they have.
+    """
+    await conn.execute("update profiles set mfa_factor_id = null where id = $1", user_id)
+
+
 # ----------------------------------------------------------------- playback --
 
 async def count_live_playback_sessions(conn: Conn, user_id: UUID) -> int:

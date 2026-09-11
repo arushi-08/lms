@@ -33,6 +33,14 @@ class InvalidToken(Exception):
     """The token is absent, malformed, expired, or not ours."""
 
 
+#: One factor. The value Supabase uses, and the value to assume whenever the
+#: claim is missing or malformed -- an old token, or one with the claim stripped,
+#: must read as the weaker level rather than the stronger one.
+AAL_SINGLE_FACTOR = "aal1"
+#: Two factors: a password (or an OAuth provider) plus TOTP.
+AAL_MULTI_FACTOR = "aal2"
+
+
 @dataclass(frozen=True, slots=True)
 class TokenClaims:
     user_id: UUID
@@ -41,6 +49,16 @@ class TokenClaims:
     #: re-read the database, because a revoked admin keeps a valid token until
     #: it expires.
     claimed_role: str
+    #: Authenticator assurance level, from Supabase's ``aal`` claim. This one is
+    #: safe to trust from the token: unlike the role, it describes what happened
+    #: during *this* sign-in, and it cannot be raised without presenting the
+    #: second factor to Supabase. A stale token cannot gain an aal it was not
+    #: issued with.
+    aal: str = AAL_SINGLE_FACTOR
+
+    @property
+    def stepped_up(self) -> bool:
+        return self.aal == AAL_MULTI_FACTOR
 
 
 class ResilientJWKClient:
@@ -152,6 +170,7 @@ def verify_token(token: str, settings: Settings) -> TokenClaims:
 
     email = payload.get("email")
     role = payload.get("user_role")
+    aal = payload.get("aal")
 
     return TokenClaims(
         user_id=user_id,
@@ -159,6 +178,9 @@ def verify_token(token: str, settings: Settings) -> TokenClaims:
         # Absent claim means the access-token hook is not enabled. Default to
         # the least privilege rather than guessing.
         claimed_role=role if isinstance(role, str) else "student",
+        # Same rule for the assurance level: anything we cannot read as a string
+        # counts as one factor.
+        aal=aal if isinstance(aal, str) else AAL_SINGLE_FACTOR,
     )
 
 

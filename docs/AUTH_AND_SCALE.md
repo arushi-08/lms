@@ -86,10 +86,52 @@ everything fails at once.
 A `kid` never seen before still fails closed. Serving a key from nowhere would mean accepting
 tokens we cannot verify, which is the opposite of the point.
 
-### 3.3 MFA for admin accounts
+### 3.3 MFA for admin accounts ✅ built
 
 Also specified, also not built. There will be one or two admins, and that account's blast
 radius is every course and all student PII. TOTP on admin sign-in only.
+
+**Built**, and it needed no cryptography of ours: Supabase (GoTrue) generates the secret,
+renders the QR code and checks the six digits. What this service adds is the decision — may
+this request act as an admin — and that turned out to need three checks rather than one.
+
+`require_admin` (`app/security/deps.py`) requires all of:
+
+1. `profiles.role = 'admin'`, read fresh, as before.
+2. A pinned TOTP factor. An admin who has never enrolled has no admin powers at all; the
+   only thing they can do is enroll.
+3. The account's verified factors being **exactly** that pinned one.
+4. `aal2` in the token — this session actually presented the code.
+
+Check 3 is the one worth explaining. `aal2` alone says *a* second factor was used, not
+*which*: someone holding the admin's password can enroll an authenticator of their own,
+step up with it, and hold a genuinely valid `aal2` token. Requiring the factor set to still
+match what was pinned on first enrollment is what defeats that. The pin is maintained by a
+trigger on `auth.mfa_factors` mirrored into `profiles` (migration 0012), so the check costs
+nothing: it rides along on the role read that was already happening.
+
+The same bar applies in two more places, deliberately:
+
+* `resolve_entitlement` — viewing unpublished content is an admin power too, and a gate
+  applied in one of two places is a gate with a hole in it.
+* `public.is_admin()` in RLS now also requires `aal2`, which closes the browser-side path:
+  an admin's anon-key session could otherwise read every profile with a password alone.
+
+Two consequences to know about:
+
+* A second enrolled authenticator **closes** admin access rather than adding a key. Set
+  Supabase's *Maximum enrolled factors* to 1 so this surfaces at enrollment.
+* A lost authenticator cannot be recovered from the app — "I lost my phone" is exactly what
+  an attacker would say. Recovery is `scripts/reset_admin_mfa.py`, which needs the database
+  connection string. Rotation while you still hold the current factor is self-service.
+
+**Residual risk, stated plainly.** If GoTrue permits *deleting* a verified factor from an
+`aal1` session, an attacker with the password could remove the real authenticator, enroll
+their own, and satisfy all four checks. Nothing in this repository can prevent that, because
+unenrollment happens between the browser and Supabase. What it can do is make it visible: the
+trigger writes every change to the factor set into the insert-only `audit_log`
+(`mfa.factors_changed`). Confirm the behaviour in your Supabase project before relying on
+admin MFA as a hard boundary.
 
 ### 3.4 Role model
 
@@ -98,6 +140,32 @@ Two roles today: `student`, `admin`. That is enough for one publisher and I woul
 manage students or refunds? If so it is a `user_role` enum value plus policy edits, best done
 before there is data to migrate. If not, adding roles "just in case" is complexity with no
 user.
+
+### 3.5 Google sign-in for students ✅ built
+
+Not in the original plan; added because most students already have a Google account and the
+email-confirmation round trip is where signups get abandoned.
+
+Supabase does the OAuth; the app contributes a button and a callback. The parts that needed
+thought were not the happy path:
+
+* **Role.** A Google account arrives as a `student`, because `handle_new_user` reads exactly
+  two display fields from provider metadata and role is not one of them. That matters more
+  than it sounds: `raw_user_meta_data` is writable by the user it belongs to, so a trigger
+  that read a `role` key from it would be a self-service admin panel. There is an RLS test
+  for the crafted-metadata case.
+* **Admin accounts.** Signing in with Google is *one* factor, exactly like a password, so an
+  admin who signs in that way still has to present TOTP. Without §3.3's `aal2` requirement,
+  enabling Google would have been a way around admin MFA for any admin with a Gmail address.
+* **Open redirect.** The `next=` parameter that carries someone back where they were headed
+  now goes through one guard (`apps/web/safe-next.mjs`), checked in CI. The obvious version of
+  that check — starts with `/`, does not start with `//` — accepted `/\evil.com`, which the
+  URL parser resolves to `http://evil.com/`. That was live in this app before OAuth existed;
+  OAuth just gave it a second entrance.
+* **Provider text.** `error_description` from the callback is logged, never rendered. An
+  attacker who can put text on our login page can write a convincing instruction on it.
+* **Avatars.** `picture` from the provider is stored only if it parses as a plain `https` URL,
+  because it ends up in an `<img src>`.
 
 ---
 
@@ -197,7 +265,7 @@ Ordered by value per unit of effort. Items 1–2 are configuration and cost noth
 ### Phase 2 — the auth gaps (small, contained)
 4. ~~Rate limiting, in-process, behind an interface (§3.1).~~ **Done.**
 5. ~~JWKS last-good-key fallback (§3.2).~~ **Done.**
-6. TOTP for admin sign-in (§3.3). Still open.
+6. ~~TOTP for admin sign-in (§3.3).~~ **Done.**
 
 ### Phase 3 — prove and hold the number
 7. **Timing middleware**: record duration per route, log anything over 200ms with the route

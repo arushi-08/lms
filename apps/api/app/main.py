@@ -19,6 +19,7 @@ from app.routers import (
     dev,
     enrollments,
     health,
+    mfa,
     progress,
     quizzes,
     video,
@@ -71,6 +72,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
+        # Without this the browser hides these from JavaScript entirely. Only a
+        # short list of response headers is readable cross-origin by default, and
+        # none of ours is on it -- so a 429 would arrive with no way to know how
+        # long to wait, and a second-factor refusal with no way to know which
+        # screen to show. The failure is invisible: the header is on the wire and
+        # in curl, and `response.headers.get(...)` returns null anyway.
+        expose_headers=[
+            "Retry-After",
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-MFA-Status",
+        ],
         max_age=600,
     )
 
@@ -100,6 +113,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     prefix = settings.api_base_path
     app.include_router(health.router)
     app.include_router(admin.router, prefix=prefix)
+    # Its own router rather than a route in admin.py, because admin.py applies
+    # the full second-factor gate to everything in it. /admin/mfa deliberately
+    # sits behind a role-only check: an admin who is blocked has to be able to
+    # find out why. No path collides with admin.router's own routes.
+    app.include_router(mfa.router, prefix=prefix)
     if settings.video_provider == "mock":
         # Never reachable in production: Settings refuses to start there on the
         # mock provider at all.

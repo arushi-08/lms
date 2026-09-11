@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { AuthDivider, GoogleButton } from "@/components/auth/google-button";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { reportAuthError } from "@/lib/auth-errors";
+import { safeNextPath } from "@/lib/safe-next";
 import { createClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -16,15 +18,25 @@ export function LoginForm() {
   const params = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(
-    params.get("error") === "link" ? "That link has expired. Sign in instead." : null,
-  );
+  const [error, setError] = useState<string | null>(() => {
+    // Fixed strings chosen by a code we set ourselves. Nothing the provider or
+    // the query string says is rendered: an attacker who can put text on our
+    // login page can write a convincing instruction on it.
+    switch (params.get("error")) {
+      case "link":
+        return "That link has expired. Sign in instead.";
+      case "oauth":
+        return "Google sign-in did not complete. Try again, or use your email.";
+      default:
+        return null;
+    }
+  });
   const [loading, setLoading] = useState(false);
 
   // Only ever an in-site path: an absolute value here would let a crafted link
-  // bounce someone to another site straight after they sign in.
-  const rawNext = params.get("next") ?? "/dashboard";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+  // bounce someone to another site straight after they sign in. safe-next.mjs
+  // has the list of ways that can be spelled.
+  const next = safeNextPath(params.get("next"));
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -88,6 +100,11 @@ export function LoginForm() {
                 Sign in
               </Button>
             </form>
+
+            <div className="mt-4 grid gap-4">
+              <AuthDivider />
+              <GoogleButton next={next} />
+            </div>
           </CardBody>
         </Card>
 

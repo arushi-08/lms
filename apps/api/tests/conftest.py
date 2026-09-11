@@ -53,6 +53,10 @@ SUPABASE_URL = "http://localhost:54321"
 ALICE = UUID("11111111-1111-1111-1111-111111111111")   # enrolled student
 BOB = UUID("22222222-2222-2222-2222-222222222222")     # signed in, not enrolled
 ADMIN = UUID("33333333-3333-3333-3333-333333333333")
+#: The admin's enrolled TOTP factor. Seeded so the admin fixture represents a
+#: fully set-up admin -- which is what almost every admin test is about. The
+#: tests that care about *not* being set up arrange that themselves.
+ADMIN_FACTOR = UUID("aaaaaaaa-0000-0000-0000-00000000000a")
 
 
 def _dsn(database: str) -> str:
@@ -115,6 +119,8 @@ def database_url() -> Iterator[str]:
           ('{BOB}',   'bob@example.test',   '{{"full_name":"Bob"}}'),
           ('{ADMIN}', 'admin@example.test', '{{"full_name":"Admin"}}');
         update profiles set role = 'admin' where id = '{ADMIN}';
+        insert into auth.mfa_factors (id, user_id, factor_type, status)
+          values ('{ADMIN_FACTOR}', '{ADMIN}', 'totp', 'verified');
         insert into enrollments (user_id, course_id, source)
           select '{ALICE}', id, 'free' from courses where slug = 'pilot-course';
         insert into courses (slug, title, status, access_type, is_free, currency)
@@ -146,13 +152,27 @@ def settings(database_url: str) -> Settings:
     )
 
 
-def token_for(user_id: UUID, email: str, role: str = "student", *, expired: bool = False) -> str:
+def token_for(
+    user_id: UUID,
+    email: str,
+    role: str = "student",
+    *,
+    expired: bool = False,
+    aal: str = "aal1",
+) -> str:
+    """A genuine HS256 token, verified by the real verification path.
+
+    ``aal`` defaults to one factor, so a test that wants admin rights has to ask
+    for the stepped-up token explicitly. Defaulting to aal2 would have made
+    every admin test pass without exercising the second-factor gate at all.
+    """
     now = datetime.now(UTC)
     return jwt.encode(
         {
             "sub": str(user_id),
             "email": email,
             "user_role": role,
+            "aal": aal,
             "aud": "authenticated",
             "iss": f"{SUPABASE_URL}/auth/v1",
             "iat": int(now.timestamp()),
@@ -177,4 +197,15 @@ def bob_auth() -> dict[str, str]:
 
 @pytest.fixture
 def admin_auth() -> dict[str, str]:
+    """An admin who has enrolled TOTP and used it this session."""
+    token = token_for(ADMIN, "admin@example.test", "admin", aal="aal2")
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def admin_auth_one_factor() -> dict[str, str]:
+    """A real admin token from a session that never presented the second factor.
+
+    What signing in with only a password -- or only Google -- produces.
+    """
     return {"Authorization": f"Bearer {token_for(ADMIN, 'admin@example.test', 'admin')}"}

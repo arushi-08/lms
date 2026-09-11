@@ -12,11 +12,24 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * The API's `X-MFA-Status` when it sent one: which second-factor screen the
+     * caller needs. Readable cross-origin only because the API names it in
+     * Access-Control-Expose-Headers -- see the CORS setup in app/main.py.
+     */
+    readonly mfaStatus: string | null = null,
+    /** Seconds to wait, from `Retry-After`, on a 429. */
+    readonly retryAfter: number | null = null,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
+
+/** The second-factor states the API distinguishes. Mirrors app/security/deps.py. */
+export const MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required";
+export const MFA_REQUIRED = "mfa_required";
+export const MFA_FACTOR_MISMATCH = "mfa_factor_mismatch";
 
 type RequestOptions = {
   method?: string;
@@ -66,7 +79,13 @@ export async function apiFetch<T>(
     } catch {
       // Non-JSON error body; the status alone will have to do.
     }
-    throw new ApiError(response.status, detail);
+    const retryAfter = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
+    throw new ApiError(
+      response.status,
+      detail,
+      response.headers.get("X-MFA-Status"),
+      Number.isNaN(retryAfter) ? null : retryAfter,
+    );
   }
 
   if (response.status === 204) return undefined as T;

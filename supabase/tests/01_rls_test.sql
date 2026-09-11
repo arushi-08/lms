@@ -43,11 +43,15 @@ returns void language sql as $$
   insert into tests.results values (label, ok);
 $$;
 
-create or replace function tests.act_as(p_user uuid, p_role text)
+-- p_aal defaults to 'aal1' -- one factor -- so that any test wanting admin
+-- rights has to say out loud that the session stepped up. Defaulting to 'aal2'
+-- would have kept the existing admin checks green while quietly removing the
+-- control 0012 added.
+create or replace function tests.act_as(p_user uuid, p_role text, p_aal text default 'aal1')
 returns void language sql as $$
   select set_config(
     'request.jwt.claims',
-    json_build_object('sub', p_user::text, 'user_role', p_role)::text,
+    json_build_object('sub', p_user::text, 'user_role', p_role, 'aal', p_aal)::text,
     false
   );
 $$;
@@ -246,7 +250,7 @@ where user_id = '11111111-1111-1111-1111-111111111111';
 
 -- --------------------------------------------------------------- admin role --
 set role authenticated;
-select tests.act_as('33333333-3333-3333-3333-333333333333', 'admin');
+select tests.act_as('33333333-3333-3333-3333-333333333333', 'admin', 'aal2');
 
 select tests.check('admin sees all profiles',
   tests.rowcount('select 1 from profiles') = 3);
@@ -261,11 +265,178 @@ select tests.check('admin JWT still cannot read answer key via PostgREST',
 
 -- A forged claim is worthless without a signature Supabase will accept, but
 -- verify the blast radius anyway: claiming admin must not unlock the key.
-select tests.act_as('22222222-2222-2222-2222-222222222222', 'admin');
+select tests.act_as('22222222-2222-2222-2222-222222222222', 'admin', 'aal2');
 select tests.check('forged admin claim still cannot read answer key',
   tests.is_denied('select * from quiz_options'));
 
+-- ------------------------------------------------------- admin second factor --
+-- An admin who signed in with one factor -- a password, or Google -- holds a
+-- genuine admin token. Since 0012 that token no longer carries admin rights
+-- through PostgREST: is_admin() requires aal2. Without this, enabling Google
+-- sign-in would have handed anyone with the admin password a way past TOTP.
+select tests.act_as('33333333-3333-3333-3333-333333333333', 'admin', 'aal1');
+select tests.check('one-factor admin cannot read other profiles',
+  tests.rowcount('select 1 from profiles') = 1);
+select tests.check('one-factor admin cannot see draft courses',
+  tests.rowcount('select 1 from courses where slug = ''secret-draft''') = 0);
+select tests.check('one-factor admin cannot see other enrollments',
+  tests.rowcount('select 1 from enrollments') = 0);
+
+-- A missing aal claim is not a pass. An old token issued before the hook, or a
+-- crafted one with the claim stripped, must read as one factor.
+select set_config('request.jwt.claims',
+  json_build_object('sub', '33333333-3333-3333-3333-333333333333',
+                    'user_role', 'admin')::text, false);
+select tests.check('admin token with no aal claim is treated as one factor',
+  tests.rowcount('select 1 from profiles') = 1);
+select tests.check('jwt_aal defaults to aal1 when the claim is absent',
+  public.jwt_aal() = 'aal1');
+
+-- Stepping up restores exactly what it should, and nothing more.
+select tests.act_as('33333333-3333-3333-3333-333333333333', 'admin', 'aal2');
+select tests.check('stepped-up admin sees all profiles again',
+  tests.rowcount('select 1 from profiles') = 3);
+select tests.check('stepped-up admin still cannot read answer key',
+  tests.is_denied('select * from quiz_options'));
+
+-- ------------------------------------------------------ factor pin mirroring --
 reset role;
+-- Verifying a factor pins it. The mirror is what the API reads on every admin
+-- request, so it has to follow GoTrue's own table without the API querying it.
+insert into auth.mfa_factors (id, user_id, factor_type, status) values
+  ('aaaaaaaa-0000-0000-0000-000000000001',
+   '33333333-3333-3333-3333-333333333333', 'totp', 'verified');
+select tests.check('first verified factor becomes the pinned one',
+  (select mfa_factor_id from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333')
+  = 'aaaaaaaa-0000-0000-0000-000000000001');
+select tests.check('verifying a factor stamps mfa_verified_at',
+  (select mfa_verified_at is not null from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333'));
+
+-- An unverified factor is not a factor. Enrollment starts there, and it must not
+-- count until a code has actually been entered.
+insert into auth.mfa_factors (id, user_id, factor_type, status) values
+  ('aaaaaaaa-0000-0000-0000-000000000002',
+   '33333333-3333-3333-3333-333333333333', 'totp', 'unverified');
+select tests.check('an unverified factor is not mirrored',
+  (select mfa_verified_factors from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333')
+  = array['aaaaaaaa-0000-0000-0000-000000000001'::uuid]);
+
+-- The attack the pin exists for: someone holding only the password enrolls
+-- their own authenticator, steps up with it, and now holds a genuine aal2
+-- token. The pin must not move to it, so the API sees a set that no longer
+-- matches what it trusts.
+update auth.mfa_factors set status = 'verified'
+  where id = 'aaaaaaaa-0000-0000-0000-000000000002';
+select tests.check('a second verified factor does not move the pin',
+  (select mfa_factor_id from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333')
+  = 'aaaaaaaa-0000-0000-0000-000000000001');
+select tests.check('a second verified factor shows up in the mirrored set',
+  (select array_length(mfa_verified_factors, 1) from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333') = 2);
+select tests.check('a factor change is written to the audit log',
+  tests.rowcount('select 1 from audit_log where action = ''mfa.factors_changed''') >= 2);
+
+-- Removing it returns the account to a matching state, so the legitimate admin
+-- recovers by deleting the intruder's factor rather than by losing their own.
+delete from auth.mfa_factors where id = 'aaaaaaaa-0000-0000-0000-000000000002';
+select tests.check('removing the extra factor restores the matching set',
+  (select mfa_verified_factors from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333')
+  = array['aaaaaaaa-0000-0000-0000-000000000001'::uuid]);
+
+-- Deleting the pinned factor does NOT clear the pin. If it did, a deleted factor
+-- would drop the account back to "enroll anything you like", which is the bypass
+-- the pin exists to prevent. Recovery is deliberate: scripts/reset_admin_mfa.py.
+delete from auth.mfa_factors where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+select tests.check('deleting the pinned factor leaves the pin in place',
+  (select mfa_factor_id from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333')
+  = 'aaaaaaaa-0000-0000-0000-000000000001');
+select tests.check('deleting the pinned factor empties the verified set',
+  (select mfa_verified_factors from public.profiles
+    where id = '33333333-3333-3333-3333-333333333333') = '{}'::uuid[]);
+
+-- A student must not be able to pin a factor for themselves by writing the
+-- column directly: it is not in the update grant.
+set role authenticated;
+select tests.act_as('11111111-1111-1111-1111-111111111111', 'student');
+select tests.check('a student cannot write their own mfa_factor_id',
+  tests.is_denied('update profiles set mfa_factor_id = gen_random_uuid()'));
+select tests.check('a student cannot write their own verified factor set',
+  tests.is_denied('update profiles set mfa_verified_factors = ''{}''::uuid[]'));
+
+reset role;
+
+-- ---------------------------------------------------- OAuth profile creation --
+reset role;
+-- A Google sign-in produces metadata the provider wrote, in the provider's own
+-- shape. What matters is which keys the trigger reads and which it ignores.
+insert into auth.users (id, email, raw_user_meta_data) values (
+  '44444444-4444-4444-4444-444444444444', 'gstudent@example.test',
+  '{"name":"Grace Google","picture":"https://lh3.googleusercontent.com/a/abc123",
+    "email_verified":true,"iss":"https://accounts.google.com"}'::jsonb
+);
+select tests.check('Google name populates full_name',
+  (select full_name from public.profiles
+    where id = '44444444-4444-4444-4444-444444444444') = 'Grace Google');
+select tests.check('Google picture populates avatar_url',
+  (select avatar_url from public.profiles
+    where id = '44444444-4444-4444-4444-444444444444')
+  = 'https://lh3.googleusercontent.com/a/abc123');
+select tests.check('an OAuth signup lands as a student',
+  (select role from public.profiles
+    where id = '44444444-4444-4444-4444-444444444444') = 'student');
+
+-- The escalation attempt. raw_user_meta_data is writable by the user it belongs
+-- to (auth.updateUser({data:...})), so a role key in there must be inert.
+insert into auth.users (id, email, raw_user_meta_data) values (
+  '55555555-5555-5555-5555-555555555555', 'sneaky@example.test',
+  '{"name":"Sneaky","role":"admin","user_role":"admin","is_admin":true}'::jsonb
+);
+select tests.check('a role claim in user metadata does not grant admin',
+  (select role from public.profiles
+    where id = '55555555-5555-5555-5555-555555555555') = 'student');
+
+-- Our own signup form still wins where both keys are present, because the
+-- student typed that one.
+insert into auth.users (id, email, raw_user_meta_data) values (
+  '66666666-6666-6666-6666-666666666666', 'both@example.test',
+  '{"full_name":"Typed Name","name":"Provider Name"}'::jsonb
+);
+select tests.check('an explicit full_name beats the provider name',
+  (select full_name from public.profiles
+    where id = '66666666-6666-6666-6666-666666666666') = 'Typed Name');
+
+-- Avatar validation. Each of these ends up in an <img src>; none should survive.
+select tests.check('a javascript: avatar is dropped',
+  public.profile_avatar_url('{"picture":"javascript:alert(1)"}'::jsonb) is null);
+select tests.check('a data: avatar is dropped',
+  public.profile_avatar_url('{"picture":"data:text/html,<h1>x"}'::jsonb) is null);
+select tests.check('a plain http avatar is dropped',
+  public.profile_avatar_url('{"picture":"http://example.com/a.png"}'::jsonb) is null);
+select tests.check('an avatar with a quote in it is dropped',
+  public.profile_avatar_url('{"picture":"https://x.test/a.png\"onerror=y"}'::jsonb) is null);
+select tests.check('an avatar with whitespace is dropped',
+  public.profile_avatar_url('{"picture":"https://x.test/a b.png"}'::jsonb) is null);
+select tests.check('an ordinary https avatar survives',
+  public.profile_avatar_url('{"picture":"https://x.test/a.png?sz=64"}'::jsonb)
+  = 'https://x.test/a.png?sz=64');
+select tests.check('a blank name is null, not an empty string',
+  public.profile_display_name('{"name":"   "}'::jsonb) is null);
+select tests.check('an absurdly long name is truncated, not stored whole',
+  length(public.profile_display_name(
+    jsonb_build_object('name', repeat('a', 5000)))) = 120);
+
+-- New accounts must not arrive with any second-factor state. Otherwise a fresh
+-- OAuth account could look, to the admin gate, like one that had already
+-- enrolled.
+select tests.check('a new profile has no pinned factor',
+  (select mfa_factor_id is null and mfa_verified_factors = '{}'::uuid[]
+     from public.profiles where id = '44444444-4444-4444-4444-444444444444'));
 
 -- ------------------------------------------------------------------ report --
 select label, case when ok then 'PASS' else 'FAIL' end as result
