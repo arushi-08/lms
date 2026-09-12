@@ -25,7 +25,8 @@ import { createClient } from "@/lib/supabase/client";
  * would eventually disagree with it, and the kinder answer would win.
  */
 
-type Factor = { id: string; friendlyName?: string; status: string };
+/** Mirrors Supabase's Factor, in the shape it actually arrives in. */
+type Factor = { id: string; friendly_name?: string; status: string };
 type MfaStatus = {
   satisfied: boolean;
   reason: string | null;
@@ -53,6 +54,10 @@ export function TwoFactorManager({ isAdmin }: { isAdmin: boolean }) {
       setError("Could not read your security settings. Reload the page.");
       return;
     }
+    // `totp` is Supabase's *verified* TOTP factors -- unverified ones appear
+    // only in `all`. Worth knowing before "simplifying" this: switching to
+    // `all` here would make the extra-authenticator warning below fire during
+    // an ordinary, half-finished setup.
     setFactors((data?.totp ?? []).map((f) => ({ ...f, status: f.status })));
 
     // Only admins have a server-side verdict to fetch; for a student the list
@@ -78,20 +83,65 @@ export function TwoFactorManager({ isAdmin }: { isAdmin: boolean }) {
     })();
   }, [refresh]);
 
+  /**
+   * Remove setup attempts that were started and never finished.
+   *
+   * Pressing "set up" creates an *unverified* factor at Supabase. Walking away
+   * from the page -- switching tabs, closing it, going to /admin -- leaves that
+   * factor behind, and the next attempt then fails with "a factor with the
+   * friendly name ... already exists". Nothing is wrong with the account; the
+   * only way out was to go and delete it in the Supabase dashboard, which is not
+   * a step anyone should need.
+   *
+   * Removing them is tidying, not a security decision: an unverified factor has
+   * never had a code entered against it, and the admin gate counts only verified
+   * ones (see migration 0012).
+   *
+   * The filter is an allowlist -- `status === "unverified"`, not
+   * `status !== "verified"`. If Supabase ever adds a third status, the wrong
+   * guess there deletes a factor we do not understand; this way it is left alone
+   * and enrollment fails loudly instead.
+   */
+  async function clearAbandonedSetup(supabase: ReturnType<typeof createClient>) {
+    const { data, error: listError } = await supabase.auth.mfa.listFactors();
+    if (listError) return;
+
+    // `all`, not `totp`: the latter is filtered to verified factors, so the
+    // abandoned one -- the entire reason this function exists -- is not in it.
+    for (const factor of data?.all ?? []) {
+      if (factor.factor_type === "totp" && factor.status === "unverified") {
+        const { error: removeError } = await supabase.auth.mfa.unenroll({
+          factorId: factor.id,
+        });
+        if (removeError) {
+          console.error(`[mfa:cleanup] ${removeError.message}`);
+        }
+      }
+    }
+  }
+
   async function beginEnrollment() {
     setBusy(true);
     setError(null);
     setNotice(null);
 
     const supabase = createClient();
+    await clearAbandonedSetup(supabase);
+
     const { data, error: enrollError } = await supabase.auth.mfa.enroll({
       factorType: "totp",
-      friendlyName: `Authenticator ${new Date().toISOString().slice(0, 10)}`,
+      // Distinct per attempt. Cleanup above should make a collision impossible,
+      // but two tabs racing each other would still find the same name taken, and
+      // a date is not a useful label anyway once there is more than one.
+      friendlyName: `Authenticator ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
     });
 
     if (enrollError || !data) {
       console.error(`[mfa:enroll] ${enrollError?.message ?? "no data"}`);
-      setError("Could not start setup. If you already have a code, remove it first.");
+      // The old message told people to "remove your existing code first", which
+      // was wrong in the one case that actually happened -- they had no code,
+      // just an abandoned attempt.
+      setError("Could not start two-factor setup. Reload the page and try again.");
       setBusy(false);
       return;
     }
@@ -224,7 +274,7 @@ export function TwoFactorManager({ isAdmin }: { isAdmin: boolean }) {
                   className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
                 >
                   <span className="text-sm font-medium text-text">
-                    {factor.friendlyName || "Authenticator"}
+                    {factor.friendly_name || "Authenticator"}
                   </span>
                   <span className="text-xs text-muted">Active</span>
                   <Button
@@ -290,11 +340,14 @@ export function TwoFactorManager({ isAdmin }: { isAdmin: boolean }) {
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => {
-                    // Leaves an unverified factor behind in Supabase, which
-                    // counts for nothing: the gate ignores unverified factors.
+                  onClick={async () => {
+                    // Take the half-finished factor with us. beginEnrollment
+                    // clears leftovers anyway, but cancelling is the one exit
+                    // from this screen we can actually see happen.
                     setEnrolling(null);
                     setCode("");
+                    await clearAbandonedSetup(createClient());
+                    await refresh();
                   }}
                 >
                   Cancel
