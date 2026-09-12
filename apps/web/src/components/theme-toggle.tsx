@@ -53,7 +53,8 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-      className="grid size-9 place-items-center rounded-md text-muted transition-colors duration-[120ms] hover:bg-surface-hover hover:text-text"
+      /* Styled for the deep-slate bar it sits on, not for the page. */
+      className="grid size-9 place-items-center rounded text-nav-muted transition-colors duration-[120ms] hover:bg-nav-hover hover:text-nav-text"
     >
       <svg
         viewBox="0 0 24 24"

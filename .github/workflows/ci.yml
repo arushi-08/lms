@@ -128,6 +128,13 @@ jobs:
         # phishing chain: our domain, our form, someone else's next screen.
         run: node scripts/check-redirects.mjs
 
+      - name: Colour contrast
+        # Reads the palette out of globals.css and checks every text/ground pair
+        # the app renders against WCAG AA. Students sit in this thing for an hour
+        # at a time, and the failure mode of a pretty palette is text nobody
+        # mentions and everybody squints at.
+        run: node scripts/check-contrast.mjs
+
       - name: Build
         # Placeholders only. src/lib/env.ts throws on a missing variable, which
         # is the point -- a real deploy with unset config fails at build rather

@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from "react";
 
 import { cn } from "@/lib/cn";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "on-nav" | "on-nav-solid";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
@@ -13,7 +13,16 @@ const VARIANTS: Record<Variant, string> = {
     "bg-surface text-text border border-border hover:bg-surface-hover " +
     "hover:border-border-strong shadow-xs active:translate-y-px",
   ghost: "text-muted hover:text-text hover:bg-surface-hover",
-  danger: "bg-danger text-white hover:brightness-110 shadow-xs active:translate-y-px",
+  danger: "bg-danger-fill text-white hover:brightness-110 shadow-xs active:translate-y-px",
+  // For the deep-slate top bar. The page-level variants cannot be reused there:
+  // `secondary` is a white card on a dark bar, and `primary` at the specified
+  // cobalt sits at 3.45:1 against slate-900 -- legible, but a call to action
+  // that recedes into the chrome instead of standing out from it.
+  "on-nav":
+    "bg-nav-raised text-nav-text border border-nav-border hover:bg-nav-hover " +
+    "hover:border-accent-on-nav active:translate-y-px",
+  "on-nav-solid":
+    "bg-accent-on-nav text-nav hover:brightness-110 shadow-xs active:translate-y-px",
 };
 
 const SIZES: Record<Size, string> = {
