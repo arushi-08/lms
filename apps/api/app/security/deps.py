@@ -231,12 +231,27 @@ async def resolve_entitlement(
     if context is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lesson not found")
 
-    admin = await learning.get_admin_context(conn, user.user_id)  # type: ignore[arg-type]
-    # The same bar as require_admin, not a softer one. Admin here buys a look at
-    # unpublished content, and an admin session that has not presented its second
-    # factor should not get that either -- otherwise "admin powers need TOTP"
-    # would have a quiet exception in the one place it is easiest to miss.
-    is_admin = admin.is_admin and admin.factors_match_pin and user.stepped_up
+    # Role first, and the second-factor state only if the role turns out to
+    # matter. Two reasons, and the first one is a bug I shipped:
+    #
+    # Reading the MFA columns unconditionally put every student's video behind a
+    # column added by an admin-MFA migration. On a database where that migration
+    # had not been applied, a student pressing play got an UndefinedColumnError
+    # -- admin schema breaking the learning path, which it has no business
+    # touching. Now a student's request reads exactly what it did before.
+    #
+    # It is also the cheaper shape. Playback and heartbeats are almost entirely
+    # student traffic, and this is one query on that path; the second query only
+    # happens for the handful of requests that are actually from an admin.
+    role = await learning.get_profile_role(conn, user.user_id)  # type: ignore[arg-type]
+    is_admin = False
+    if role == "admin":
+        admin = await learning.get_admin_context(conn, user.user_id)  # type: ignore[arg-type]
+        # The same bar as require_admin, not a softer one. Admin here buys a look
+        # at unpublished content, and a session that has not presented its second
+        # factor should not get that either -- otherwise "admin powers need TOTP"
+        # would have a quiet exception in the one place it is easiest to miss.
+        is_admin = admin.factors_match_pin and user.stepped_up
 
     if context.course_status != "published" and not is_admin:
         # 404 rather than 403: an unpublished course should not be discoverable

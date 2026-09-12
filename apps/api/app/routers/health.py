@@ -38,6 +38,21 @@ EXPECTED_TABLES = (
     "notifications",
 )
 
+#: Columns added by a migration that adds no table of its own.
+#:
+#: A table-only drift check cannot see those, and the way that failed was
+#: exactly backwards: /readyz reported the schema healthy while a student
+#: pressing play got an UndefinedColumnError from deep inside a query. A
+#: migration that adds a column to an existing table belongs here, or the next
+#: one will be found the same way.
+EXPECTED_COLUMNS = (
+    ("profiles", "mfa_factor_id"),          # 0012
+    ("profiles", "mfa_verified_factors"),   # 0012
+    ("profiles", "mfa_verified_at"),        # 0012
+    ("lessons", "duration_seconds"),        # 0003
+    ("assignments", "passing_score"),       # 0011
+)
+
 
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
@@ -59,14 +74,32 @@ async def readyz(
                     "where table_schema = 'public'"
                 )
             }
+            columns = {
+                (row["table_name"], row["column_name"])
+                for row in await conn.fetch(
+                    "select table_name, column_name from information_schema.columns "
+                    "where table_schema = 'public'"
+                )
+            }
         checks["database"] = "ok"
 
         missing = [name for name in EXPECTED_TABLES if name not in present]
-        if missing:
-            # Table names are not sensitive, and naming them turns "something
-            # is broken" into "run your migrations".
+        # Only worth reporting for tables that exist: every column of a missing
+        # table is missing too, and listing them buries the one fact that matters.
+        missing_columns = [
+            f"{table}.{column}"
+            for table, column in EXPECTED_COLUMNS
+            if table in present and (table, column) not in columns
+        ]
+
+        if missing or missing_columns:
+            # Names are not sensitive, and naming them turns "something is
+            # broken" into "run your migrations".
             checks["schema"] = "out of date"
-            checks["missing_tables"] = missing
+            if missing:
+                checks["missing_tables"] = missing
+            if missing_columns:
+                checks["missing_columns"] = missing_columns
             checks["hint"] = "run `supabase db push` to apply pending migrations"
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         else:

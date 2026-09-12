@@ -450,3 +450,64 @@ class TestCorsExposure:
         # 429 has to guess how long to back off, which is how a limiter turns
         # into a retry storm.
         assert {"retry-after", "x-ratelimit-limit", "x-ratelimit-remaining"} <= exposed
+
+
+class TestSchemaCoupling:
+    """A student's lesson must not depend on the admin-MFA schema.
+
+    This is a regression test for a bug I shipped: `resolve_entitlement` read the
+    pinned-factor columns for *every* caller, so on a database where migration
+    0012 had not been applied yet, a student pressing play got an
+    UndefinedColumnError out of asyncpg. Admin schema broke the learning path,
+    which it has no business touching.
+
+    The fix is to read the role first and the factor state only when the role
+    turns out to be admin. That is checked here by counting queries rather than
+    by dropping the columns, because a test that mutates the schema mid-suite
+    would leak into every test that runs after it.
+    """
+
+    async def test_a_student_never_reads_the_mfa_columns(
+        self, client: AsyncClient, conn, alice_auth, monkeypatch
+    ) -> None:
+        from app.repositories import learning
+
+        calls: list[str] = []
+        real = learning.get_admin_context
+
+        async def spy(connection, user_id):  # type: ignore[no-untyped-def]
+            calls.append(str(user_id))
+            return await real(connection, user_id)
+
+        monkeypatch.setattr(learning, "get_admin_context", spy)
+
+        lesson = await conn.fetchval("select id from lessons where slug = 'going-deeper'")
+        response = await client.post(f"/api/lessons/{lesson}/playback", headers=alice_auth)
+
+        assert response.status_code == 200
+        assert calls == [], (
+            "a student's playback grant read the admin second-factor state; "
+            "that couples the learning path to the admin-MFA migration"
+        )
+
+    async def test_an_admin_still_reads_them(
+        self, client: AsyncClient, conn, admin_auth, monkeypatch
+    ) -> None:
+        """The other half. Skipping the read for admins too would silently drop
+        the second-factor requirement on unpublished content."""
+        from app.repositories import learning
+
+        calls: list[str] = []
+        real = learning.get_admin_context
+
+        async def spy(connection, user_id):  # type: ignore[no-untyped-def]
+            calls.append(str(user_id))
+            return await real(connection, user_id)
+
+        monkeypatch.setattr(learning, "get_admin_context", spy)
+
+        hidden = await conn.fetchval("select id from lessons where slug = 'hidden'")
+        response = await client.post(f"/api/lessons/{hidden}/playback", headers=admin_auth)
+
+        assert response.status_code == 200
+        assert calls == [str(ADMIN)]
