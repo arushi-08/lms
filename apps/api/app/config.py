@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     video_watermark_enabled: bool = True
     #: Simultaneous playback grants per user before requests are refused.
     video_max_concurrent_sessions: int = 2
+    #: Where the mock provider keeps uploaded clips.
+    #:
+    #: Defaults to a directory inside the API package rather than the system
+    #: temp directory. Temp was the original choice and it quietly lost a
+    #: pilot's videos: macOS sweeps $TMPDIR after a few days and clears it on
+    #: reboot, so clips uploaded once and watched over following weeks turned
+    #: into 404s while the database still said "ready". CI and tests point this
+    #: somewhere disposable instead.
+    mock_video_dir: Path = ENV_FILE.parent / ".media" / "video"
 
     # --- Payments -----------------------------------------------------------
     # "none" for the pilot: Stripe is not approved yet and no price is set.

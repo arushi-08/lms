@@ -11,6 +11,9 @@ node_modules/
 .next/
 dist/
 
+# Mock video provider's uploads: local clips, sometimes gigabytes
+.media/
+
 # Secrets — never commit these
 .env
 .env.local

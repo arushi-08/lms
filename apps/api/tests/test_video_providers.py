@@ -15,6 +15,16 @@ from app.providers.video.factory import build_video_provider
 from app.providers.video.mock import MockVideoProvider
 from app.providers.video.vdocipher import VdoCipherProvider, build_watermark
 
+# The async tests here ran only because pytest-asyncio's auto mode claimed
+# them; every other module marks anyio explicitly. Saying so out loud means the
+# module no longer depends on which async plugin happens to be installed.
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(scope="session")
+def anyio_backend() -> str:
+    return "asyncio"
+
 VIEWER = Viewer(
     user_id=UUID("11111111-1111-1111-1111-111111111111"),
     email="alice@example.test",

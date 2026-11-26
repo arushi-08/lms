@@ -19,14 +19,20 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
-    "pytest-asyncio>=0.24",
+    # anyio, not pytest-asyncio: every async test here is marked
+    # `pytest.mark.anyio`, and nothing uses `mark.asyncio`. pytest-asyncio was
+    # listed and left in auto mode, so it claimed anyio's tests as well --
+    # harmless until one of its releases started warning at configure time,
+    # which `filterwarnings = ["error"]` below turns into an aborted run before
+    # collection. It was also only ever installed in CI by being named on the
+    # command line; listing it here is what makes a fresh checkout runnable.
+    "anyio>=4.4",
     "ruff>=0.7",
     "mypy>=1.13",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 filterwarnings = ["error"]
 
 [tool.ruff]

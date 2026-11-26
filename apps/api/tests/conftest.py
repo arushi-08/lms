@@ -140,7 +140,7 @@ def database_url() -> Iterator[str]:
 
 
 @pytest.fixture(scope="session")
-def settings(database_url: str) -> Settings:
+def settings(database_url: str, tmp_path_factory: pytest.TempPathFactory) -> Settings:
     return Settings(
         environment="development",
         supabase_url=SUPABASE_URL,
@@ -148,6 +148,9 @@ def settings(database_url: str) -> Settings:
         supabase_service_role_key=SecretStr("test-service-role"),
         database_url=SecretStr(database_url),
         video_provider="mock",
+        # Disposable, and per-run: the default is a real directory inside the
+        # package, and a test suite has no business writing clips into it.
+        mock_video_dir=tmp_path_factory.mktemp("mock-video"),
         cors_origins=["http://localhost:3000"],
     )
 
