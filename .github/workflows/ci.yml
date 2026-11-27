@@ -128,6 +128,12 @@ jobs:
         # phishing chain: our domain, our form, someone else's next screen.
         run: node scripts/check-redirects.mjs
 
+      - name: Middleware matcher
+        # One negative-lookahead regex decides which paths get a session
+        # check. A two-character edit to it can stop /dashboard being guarded
+        # with no other visible symptom.
+        run: node scripts/check-middleware.mjs
+
       - name: Colour contrast
         # Reads the palette out of globals.css and checks every text/ground pair
         # the app renders against WCAG AA. Students sit in this thing for an hour

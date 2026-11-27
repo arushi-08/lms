@@ -31,7 +31,14 @@ export function GoogleButton({ next, label }: { next?: string; label?: string })
     // redirectTo into the provider round trip, and a value that is checked in
     // only one of the two places is a value that is effectively unchecked.
     const target = safeNextPath(next);
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(target)}`;
+    // flow=oauth comes back to the callback and is the only reliable way to
+    // tell this apart from an emailed confirmation link, which arrives at the
+    // same route with the same `code`. Without it a failed Google sign-in
+    // tells the user their link has expired, which is nonsense and sends them
+    // looking in their inbox.
+    const redirectTo =
+      `${window.location.origin}/auth/callback` +
+      `?flow=oauth&next=${encodeURIComponent(target)}`;
 
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
