@@ -48,6 +48,8 @@ export type AdminLesson = {
   duration_seconds: number | null;
   video_id: string | null;
   video_status: "absent" | "uploading" | "processing" | "ready" | "failed";
+  /** "managed" means this platform holds the file; "youtube" means it does not. */
+  video_source: "managed" | "youtube";
   has_quiz: boolean;
 };
 

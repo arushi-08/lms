@@ -27,9 +27,12 @@ export function buildCsp(apiUrl, { dev = false } = {}) {
   // reconstruction. Production never does, so the allowance is scoped to dev
   // rather than left on — 'unsafe-eval' in production would undo much of the
   // point of having a script-src at all.
+  // www.youtube.com is for the IFrame Player API script, which has to come
+  // from YouTube's own origin -- the player it creates will not talk to a
+  // self-hosted copy. The frames themselves load from youtube-nocookie.com.
   const scriptSrc = dev
-    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com"
-    : "script-src 'self' 'unsafe-inline' https://js.stripe.com";
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://www.youtube.com"
+    : "script-src 'self' 'unsafe-inline' https://js.stripe.com https://www.youtube.com";
   return [
     "default-src 'self'",
     scriptSrc,
@@ -42,7 +45,13 @@ export function buildCsp(apiUrl, { dev = false } = {}) {
     // The browser talks to the API directly for playback grants, progress,
     // quiz submission and every admin mutation.
     `connect-src 'self' ${api} https://*.supabase.co wss://*.supabase.co https://api.stripe.com`,
-    "frame-src https://player.vdocipher.com https://js.stripe.com https://hooks.stripe.com",
+    // youtube-nocookie rather than youtube.com: it is the privacy-preserving
+    // embed domain, and students are in jurisdictions where that matters.
+    // youtube.com is listed alongside it because the player can redirect a
+    // frame there in some error paths, and a blocked frame shows as a blank
+    // box with nothing in the server log.
+    "frame-src https://player.vdocipher.com https://www.youtube-nocookie.com " +
+      "https://www.youtube.com https://js.stripe.com https://hooks.stripe.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

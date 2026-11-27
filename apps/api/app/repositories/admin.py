@@ -177,6 +177,7 @@ async def get_course_tree(conn: Conn, course_id: UUID) -> dict[str, Any] | None:
         select l.id, l.module_id, l.title, l.slug, l.type::text as type, l.position,
                l.is_preview, l.is_required, l.duration_seconds,
                l.video_id, l.video_status::text as video_status,
+               l.video_source::text as video_source,
                (q.id is not null) as has_quiz
         from lessons l
         join modules m on m.id = l.module_id
@@ -335,6 +336,50 @@ async def set_lesson_video(
         video_id,
         status,
     )
+
+
+async def attach_youtube_video(conn: Conn, lesson_id: UUID, video_id: str) -> dict[str, Any]:
+    """Point a lesson at a YouTube video.
+
+    All three columns move together. video_source alone would leave the id
+    belonging to the previous provider, and a YouTube lesson left in
+    'processing' would sit behind the "video is not ready yet" check forever --
+    nothing uploads it, so nothing would ever move it on. The database enforces
+    both of those as constraints; this is the only writer that satisfies them.
+    """
+    row = await conn.fetchrow(
+        """
+        update lessons
+           set video_source = 'youtube', video_id = $2, video_status = 'ready'
+         where id = $1 and type = 'video'
+        returning id, title, video_id, video_source::text as video_source,
+                  video_status::text as video_status
+        """,
+        lesson_id,
+        video_id,
+    )
+    if row is None:
+        # Either no such lesson, or it is not a video lesson. Both are the
+        # caller asking for something incoherent rather than a server fault.
+        raise ConflictError("no video lesson with that id")
+    return dict(row)
+
+
+async def detach_youtube_video(conn: Conn, lesson_id: UUID) -> dict[str, Any]:
+    """Return a lesson to the managed provider with no video attached."""
+    row = await conn.fetchrow(
+        """
+        update lessons
+           set video_source = 'managed', video_id = null, video_status = 'absent'
+         where id = $1 and video_source = 'youtube'
+        returning id, title, video_id, video_source::text as video_source,
+                  video_status::text as video_status
+        """,
+        lesson_id,
+    )
+    if row is None:
+        raise ConflictError("that lesson has no YouTube video attached")
+    return dict(row)
 
 
 async def set_video_status(conn: Conn, lesson_id: UUID, status: str) -> None:

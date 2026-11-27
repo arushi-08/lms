@@ -96,6 +96,10 @@ export async function apiFetch<T>(
 
 export type PlaybackGrant = {
   lesson_id: string;
+  /** Which player to render. "youtube" carries no secret; see video.py. */
+  provider: "vdocipher" | "mock" | "youtube";
+  /** Set only when provider is "youtube". A public id, not a grant. */
+  youtube_video_id: string | null;
   otp: string;
   playback_info: string;
   expires_at: string;

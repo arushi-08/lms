@@ -31,6 +31,8 @@ const csp = buildCsp("http://localhost:8000");
 const need = [
   ["connect-src", "https://*.supabase.co", "auth and direct table reads"],
   ["frame-src", "https://player.vdocipher.com", "the DRM video player"],
+  ["frame-src", "https://www.youtube-nocookie.com", "YouTube-hosted lessons"],
+  ["script-src", "https://www.youtube.com", "the YouTube IFrame Player API"],
   ["frame-src", "https://js.stripe.com", "Stripe checkout"],
   ["script-src", "https://js.stripe.com", "the Stripe SDK"],
 ];

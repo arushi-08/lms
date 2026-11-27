@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { YouTubePlayer } from "@/components/learn/youtube-player";
 import { adminFetch } from "@/lib/admin-client";
 import type { PlaybackGrant } from "@/lib/api";
 
@@ -24,7 +25,11 @@ const MAX_TICK_SECONDS = 2;
  *
  * With VdoCipher the grant is an OTP handed to their iframe and no stream URL
  * exists on our side at all. With the mock it is a direct URL to the uploaded
- * file. The entitlement check that produces either is the same code.
+ * file. With YouTube there is no grant at all -- the id is public -- and the
+ * player is YouTube's own. The entitlement check that produces any of the
+ * three is the same code, and so is the progress accounting below: a YouTube
+ * lesson earns credit exactly the way an uploaded one does, which is the whole
+ * reason for embedding it instead of linking out.
  */
 export function VideoPlayer({
   lessonId,
@@ -128,6 +133,27 @@ export function VideoPlayer({
           )}
         </div>
       </div>
+    );
+  }
+
+  if (grant.provider === "youtube" && grant.youtube_video_id) {
+    return (
+      <YouTubePlayer
+        videoId={grant.youtube_video_id}
+        startSeconds={grant.last_position_seconds}
+        onTick={(currentTime) => {
+          accumulate(currentTime);
+          void beat(watched.current, currentTime);
+        }}
+        onEnded={(currentTime) => {
+          // Flush, for the same reason the uploaded player flushes on pause:
+          // the last stretch before the end is otherwise lost to the throttle,
+          // and that is exactly the stretch that completes the lesson.
+          lastSent.current = 0;
+          void beat(watched.current, currentTime);
+        }}
+        onError={setError}
+      />
     );
   }
 

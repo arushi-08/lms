@@ -49,6 +49,7 @@ EXPECTED_COLUMNS = (
     ("profiles", "mfa_factor_id"),          # 0012
     ("profiles", "mfa_verified_factors"),   # 0012
     ("profiles", "mfa_verified_at"),        # 0012
+    ("lessons", "video_source"),            # 0014
     ("lessons", "duration_seconds"),        # 0003
     ("assignments", "passing_score"),       # 0011
 )

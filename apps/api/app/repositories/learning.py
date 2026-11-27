@@ -32,6 +32,9 @@ class LessonContext:
     duration_seconds: int | None
     video_id: str | None
     video_status: str
+    #: 'managed' (VdoCipher or the mock) or 'youtube'. Decides whether playback
+    #: mints a protected grant or hands back a public embed id.
+    video_source: str
     course_id: UUID
     course_status: str
     completion_threshold: int
@@ -61,6 +64,7 @@ select
     l.duration_seconds,
     l.video_id,
     l.video_status::text     as video_status,
+    l.video_source::text     as video_source,
     c.id                     as course_id,
     c.status::text           as course_status,
     c.completion_threshold,

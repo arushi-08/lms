@@ -12,10 +12,20 @@ is fixed and every step matters:
 
 No stream URL is produced anywhere in this file. The browser receives an OTP
 that expires in minutes and is useless to anyone else.
+
+A YouTube lesson skips steps 3 to 5, and the reason is worth stating rather
+than discovering: a YouTube video is public wherever it is embedded. There is
+no OTP to mint, no watermark to burn in, and a concurrent-stream cap on a video
+anyone can open on youtube.com protects nothing while still being able to lock
+a legitimate student out of their own lesson. Performing those steps anyway
+would be theatre, and theatre in a security path is worse than nothing because
+it reads, later, like a guarantee. Step 2 is unchanged: a YouTube lesson inside
+a gated course is still gated.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -42,9 +52,14 @@ _playback_limit = rate_limit("playback", Limits().playback)
 
 class PlaybackResponse(BaseModel):
     lesson_id: UUID
+    #: Which player the browser should render. "youtube" means the fields below
+    #: carry no secret and `youtube_video_id` is set instead.
+    provider: str
     otp: str
     playback_info: str
     expires_at: str
+    #: Set only for a YouTube lesson. A public id, embedded in an iframe.
+    youtube_video_id: str | None = None
     #: Populated only by the mock provider in development.
     direct_url: str | None = None
     #: Watch time already credited. The player seeds its counter from this and
@@ -82,6 +97,25 @@ async def create_playback_grant(
         if not context.video_id or context.video_status != "ready":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="video is not ready yet"
+            )
+
+        if context.video_source == "youtube":
+            # Nothing to protect and nothing to record: see the module docstring.
+            # Progress is still tracked, by the heartbeat, exactly as elsewhere.
+            stored = await learning.get_progress(conn, user.user_id, lesson_id)
+            return PlaybackResponse(
+                lesson_id=lesson_id,
+                provider="youtube",
+                youtube_video_id=context.video_id,
+                # Deliberately empty rather than a plausible-looking value. A
+                # fake OTP here would be indistinguishable from a real one in a
+                # log, and the next person to read it would draw the wrong
+                # conclusion about what this lesson is protected by.
+                otp="",
+                playback_info="",
+                expires_at=datetime.now(UTC).isoformat(),
+                watched_seconds=stored.watched_seconds if stored else 0,
+                last_position_seconds=stored.last_position_seconds if stored else 0,
             )
 
         # Admins reviewing content should not be throttled by the student cap.
@@ -126,6 +160,7 @@ async def create_playback_grant(
 
     return PlaybackResponse(
         lesson_id=lesson_id,
+        provider=provider.name,
         otp=grant.otp,
         playback_info=grant.playback_info,
         expires_at=grant.expires_at.isoformat(),

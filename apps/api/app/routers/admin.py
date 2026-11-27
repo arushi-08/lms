@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 
+from app.domain import youtube
 from app.providers.video.base import VideoProviderError
 from app.repositories import admin as repo
 from app.security.deps import AdminDep, DatabaseDep, VideoProviderDep
@@ -69,6 +70,13 @@ class UpdateLesson(BaseModel):
     is_required: bool | None = None
     duration_seconds: int | None = Field(default=None, ge=0, le=86_400)
     content: dict[str, Any] | None = None
+
+
+class AttachYouTube(BaseModel):
+    #: Whatever the admin pasted -- a watch URL, a youtu.be link, a Shorts
+    #: link, or a bare id. Parsed and validated in app.domain.youtube; a value
+    #: that is not unmistakably a YouTube video is refused rather than cleaned.
+    url: str = Field(min_length=1, max_length=2048)
 
 
 class Reorder(BaseModel):
@@ -330,6 +338,67 @@ async def update_lesson(
             entity_type="lesson",
             entity_id=str(lesson_id),
             diff={k: v for k, v in changes.items() if k != "content"},
+        )
+    return lesson
+
+
+@router.put("/lessons/{lesson_id}/youtube")
+async def attach_youtube(
+    lesson_id: UUID, payload: AttachYouTube, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    """Point a video lesson at a public YouTube video.
+
+    Nothing is uploaded and nothing is protected -- the clip is as public as it
+    was before. What this buys is that the student watches it inside the course,
+    with their progress tracked, instead of being sent to youtube.com and not
+    coming back.
+    """
+    try:
+        video_id = youtube.extract_video_id(payload.url)
+    except youtube.InvalidYouTubeReference as exc:
+        # The admin's own input, so saying exactly what is wrong with it is
+        # helpful rather than a disclosure: they typed it.
+        raise HTTPException(
+            # The integer rather than the constant: Starlette renamed this
+            # one (…_ENTITY to …_CONTENT) and warns on the old spelling, which
+            # filterwarnings = ["error"] turns into a failed request. 422 is
+            # the stable thing here.
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    async with database.transaction() as conn:
+        try:
+            lesson = await repo.attach_youtube_video(conn, lesson_id, video_id)
+        except repo.ConflictError as exc:
+            raise conflict(exc) from exc
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="lesson.youtube_attached",
+            entity_type="lesson",
+            entity_id=str(lesson_id),
+            diff={"video_id": video_id},
+        )
+    return {**lesson, "watch_url": youtube.watch_url(video_id)}
+
+
+@router.delete("/lessons/{lesson_id}/youtube")
+async def detach_youtube(
+    lesson_id: UUID, admin: AdminDep, database: DatabaseDep
+) -> dict[str, Any]:
+    async with database.transaction() as conn:
+        try:
+            lesson = await repo.detach_youtube_video(conn, lesson_id)
+        except repo.ConflictError as exc:
+            raise conflict(exc) from exc
+        await repo.write_audit(
+            conn,
+            actor_id=admin.user_id,
+            action="lesson.youtube_detached",
+            entity_type="lesson",
+            entity_id=str(lesson_id),
+            diff=None,
         )
     return lesson
 

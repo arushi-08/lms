@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 
 import { AssessmentEditor } from "@/components/admin/assessment-editor";
 import { VideoUpload } from "@/components/admin/video-upload";
+import { YouTubeAttach } from "@/components/admin/youtube-attach";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -202,6 +203,7 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
                           </span>
                           <Badge>{lesson.type}</Badge>
                           {lesson.is_preview ? <Badge tone="accent">free preview</Badge> : null}
+                          {lesson.video_source === "youtube" ? <Badge>YouTube</Badge> : null}
                           <div className="flex items-center gap-1">
                             <Button
                               variant="ghost"
@@ -268,8 +270,18 @@ export function CourseEditor({ course }: { course: AdminCourseTree }) {
                         </div>
 
                         {lesson.type === "video" ? (
-                          <div className="mt-2 pl-6">
-                            <VideoUpload
+                          <div className="mt-2 grid gap-2 pl-6">
+                            {/* Upload is listed first because it is the one
+                                that protects the content. YouTube is the
+                                alternative for material that is already
+                                public, not a second-best upload. */}
+                            {lesson.video_source === "youtube" ? null : (
+                              <VideoUpload
+                                lesson={lesson}
+                                onChanged={() => startTransition(() => router.refresh())}
+                              />
+                            )}
+                            <YouTubeAttach
                               lesson={lesson}
                               onChanged={() => startTransition(() => router.refresh())}
                             />

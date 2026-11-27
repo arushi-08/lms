@@ -166,6 +166,42 @@ Worth starting the application now regardless, since approval is the long pole.
 
 ---
 
+## Video: uploaded vs YouTube
+
+A video lesson gets its content one of two ways, chosen per lesson in the course
+editor.
+
+**Uploaded** (`video_source = 'managed'`) goes to the configured provider — VdoCipher in
+production, the mock locally. It is DRM-protected, playback needs a short-lived OTP tied to
+one viewer, the stream is watermarked, and the concurrent-session cap applies. This is the
+only option for anything that should stay behind enrollment.
+
+**YouTube** (`video_source = 'youtube'`) points the lesson at a video that already exists on
+YouTube. Paste a watch, `youtu.be`, Shorts or embed link into the lesson's "use a YouTube
+video" field. The student watches it inside the course, in YouTube's embedded player, and
+their progress is tracked exactly as it is for an uploaded clip — that tracking is the whole
+reason to embed rather than link out.
+
+What it is not is protected:
+
+- The video is public wherever it is embedded. Anyone with the id can watch it on YouTube or
+  download it with a third-party tool. **Unlisted is not private** — the URL is shareable.
+- A *private* YouTube video cannot be embedded for other viewers at all, so that is not a
+  way to have both.
+- Playback therefore mints no OTP, records no session in the playback ledger and applies no
+  concurrent-stream cap. None of those protect a public video, and performing them anyway
+  would read later like a guarantee that was never there.
+
+**Entitlement is unchanged.** A YouTube lesson inside a gated course is still gated — hosting
+says nothing about who may see it. To open one up, tick **free preview** on the lesson, the
+same flag used for any other free content. That is deliberate: making a lesson public as a
+side effect of where its bytes live would be a surprising place for an access decision to
+hide.
+
+The embed loads from `youtube-nocookie.com`, which sets fewer tracking cookies — worth having
+with students in the EU and India. Both that domain and `www.youtube.com` (for the player
+API script) are in the CSP already; `apps/web/scripts/check-csp.mjs` asserts it.
+
 ## Admin two-factor authentication
 
 Admin access needs three things, checked on every request: the `admin` role in the
