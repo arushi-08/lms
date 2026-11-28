@@ -19,10 +19,18 @@ confusion into one command.
 
     python3 scripts/check_vdocipher.py                 # read-only
     python3 scripts/check_vdocipher.py --upload-host   # also probes an upload URL
+    python3 scripts/check_vdocipher.py --probe-delete <video-id>
 
 Read-only by default. `--upload-host` creates an empty placeholder video to get
 a ticket and deletes it again; if the delete fails it tells you the id so you
 can remove it by hand.
+
+`--probe-delete <id>` exists because that delete *did* fail, with HTTP 400, and
+VdoCipher's documentation is not reachable from the machine this was written
+on. Rather than guess at the right call and ship a second broken one, it tries
+the plausible spellings against the real account and reports which the API
+accepts. Destructive, obviously: it deletes the video you name. Use it on the
+placeholder the previous run left behind.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -129,8 +138,62 @@ async def main(probe_upload: bool) -> int:
     return 0
 
 
+async def probe_delete(video_id: str) -> int:
+    """Find the call VdoCipher accepts for deleting a video.
+
+    The provider's current spelling returns HTTP 400. These are candidates, not
+    knowledge -- the API reference could not be read from here -- so the point
+    is to let the account answer rather than to guess convincingly. Each
+    rejected attempt costs one 400 and changes nothing.
+    """
+    secret = os.environ.get("VDOCIPHER_API_SECRET", "").strip()
+    if not secret:
+        print("set VDOCIPHER_API_SECRET", file=sys.stderr)
+        return 2
+
+    provider = VdoCipherProvider(secret, base_url=BASE_URL)
+    print(f"probing delete for {video_id}\n")
+
+    attempts: list[tuple[str, dict[str, Any]]] = [
+        ("DELETE /videos?videos=<id>", {"method": "DELETE", "path": "/videos",
+                                        "params": {"videos": video_id}}),
+        ("DELETE /videos  body {videos: [<id>]}", {"method": "DELETE", "path": "/videos",
+                                                   "json": {"videos": [video_id]}}),
+        ("DELETE /videos  body {videoIds: [<id>]}", {"method": "DELETE", "path": "/videos",
+                                                     "json": {"videoIds": [video_id]}}),
+        ("DELETE /videos/<id>", {"method": "DELETE", "path": f"/videos/{video_id}"}),
+        ("DELETE /videos?videoIds=<id>  (what the provider does now)",
+         {"method": "DELETE", "path": "/videos", "params": {"videoIds": video_id}}),
+    ]
+
+    for label, call in attempts:
+        method = str(call.pop("method"))
+        path = str(call.pop("path"))
+        try:
+            # Reaching into the provider deliberately: the point is to exercise its
+            # own transport and headers, not a second HTTP client that might differ.
+            await provider._request(method, path, **call)
+        except VideoProviderError as exc:
+            print(f"  no   {label}\n       {exc}")
+            continue
+        print(f"\n  YES  {label}")
+        print("\nUpdate VdoCipherProvider.delete in")
+        print("apps/api/app/providers/video/vdocipher.py to match, and send me this line.")
+        return 0
+
+    print("\nNone of the candidates worked. Send me this output and the relevant")
+    print("page of VdoCipher's API reference, and delete the video in their dashboard.")
+    return 1
+
+
 if __name__ == "__main__":
-    flags = set(sys.argv[1:])
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--probe-delete":
+        if len(argv) != 2:
+            sys.exit("usage: check_vdocipher.py --probe-delete <video-id>")
+        raise SystemExit(asyncio.run(probe_delete(argv[1])))
+
+    flags = set(argv)
     unknown = flags - {"--upload-host"}
     if unknown:
         sys.exit(f"unknown option(s): {', '.join(sorted(unknown))}\n\n{__doc__}")

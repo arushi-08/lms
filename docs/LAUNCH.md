@@ -189,6 +189,20 @@ with instructions. Attempt one upload, read the refused origin out of the browse
 CSP violation, add it. The failure message now names the origin and says to check for a CSP
 violation, because this exact shape of bug has cost this project an evening before.
 
+**Deleting a lesson does not delete its video from VdoCipher.** Nothing in the application
+ever calls `VideoProvider.delete`; `delete_lesson` removes the database row and leaves the
+clip on the vendor. Two consequences: you keep paying to store video nobody can reach, which
+compounds over a year of editing, and content you believe you deleted still exists at a third
+party, which is the wrong answer to give a student who asks.
+
+The provider's `delete` is also broken — it returns HTTP 400, found by the first real call
+ever made to it (`scripts/check_vdocipher.py`), and nobody noticed because nothing calls it.
+`--probe-delete <id>` finds the spelling the API accepts.
+
+Worth a deliberate decision rather than a reflex fix: cascading a lesson deletion into the
+vendor makes a mis-click destroy the master copy irreversibly. A safer shape is to leave the
+video and give admins a view of what is orphaned, so removal is something a person chooses.
+
 **Admin lockout.** Authoring needs an admin session at `aal2` with the pinned authenticator.
 Lose the phone and nobody can publish anything until someone with the database connection
 string runs `scripts/reset_admin_mfa.py`. Before launch: enrol, and make sure the person who

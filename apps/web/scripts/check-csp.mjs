@@ -33,6 +33,11 @@ const need = [
   ["frame-src", "https://player.vdocipher.com", "the DRM video player"],
   ["frame-src", "https://www.youtube-nocookie.com", "YouTube-hosted lessons"],
   ["script-src", "https://www.youtube.com", "the YouTube IFrame Player API"],
+  [
+    "connect-src",
+    "https://vdo-us-east.s3-accelerate.amazonaws.com",
+    "the admin's browser uploading a video straight to VdoCipher",
+  ],
   ["frame-src", "https://js.stripe.com", "Stripe checkout"],
   ["script-src", "https://js.stripe.com", "the Stripe SDK"],
 ];

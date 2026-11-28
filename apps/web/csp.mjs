@@ -14,15 +14,22 @@ export const DEFAULT_API_URL = "http://localhost:8000";
 /**
  * Hosts the admin's browser uploads video to.
  *
- * Empty until the VdoCipher account exists. The upload URL is minted by their
- * API per upload and its host has never been observed from here, so guessing
- * it would be worse than leaving this visible and empty: a wrong guess reads
- * as "handled" in review and still fails at the first upload.
+ * Observed, not guessed: `scripts/check_vdocipher.py --upload-host` asked the
+ * account for a real upload ticket and this is the origin it named. VdoCipher
+ * hands out a pre-signed S3 transfer-acceleration URL for the bucket serving
+ * the account's region.
  *
- * To fill it in: attempt one upload in the admin panel, read the refused
- * origin out of the browser console's CSP violation, and add it here.
+ * Pinned to the one bucket rather than `https://*.s3-accelerate.amazonaws.com`,
+ * which would have been the tempting generalisation and is a bad one: anyone
+ * can create an S3 bucket, so the wildcard turns connect-src into permission to
+ * POST this page's data to any attacker's bucket. The cost of pinning is that a
+ * VdoCipher region change breaks uploads -- and that now fails loudly, because
+ * the upload error names the origin it could not reach and says to look for a
+ * CSP violation. Re-run the script and add the new host.
  */
-export const VDOCIPHER_UPLOAD_HOSTS = [];
+export const VDOCIPHER_UPLOAD_HOSTS = [
+  "https://vdo-us-east.s3-accelerate.amazonaws.com",
+];
 
 export function apiOriginFrom(raw) {
   try {
