@@ -121,6 +121,90 @@ day:
 
 ---
 
+## 3.6 Ordering: deploy first, or configure Google first?
+
+**Deploy first.** Not because Google's setup is wasted otherwise — most of it is not — but
+because one half of it is tied to a domain that does not exist yet, and doing it twice is how
+a half-configured state survives into launch day.
+
+What does *not* change when you deploy:
+
+- The redirect URI Google needs is **Supabase's** callback,
+  `https://<ref>.supabase.co/auth/v1/callback`. It belongs to the Supabase project, not to
+  your app, so it is the same on localhost and in production.
+- The OAuth consent screen, and the client ID and secret.
+
+What does change:
+
+- **Supabase → Authentication → URL Configuration.** Site URL becomes the production domain,
+  and the production origin joins the Redirect URLs allowlist. Get this wrong and sign-in
+  succeeds and then lands on the login page with no message.
+- **Google's Authorised JavaScript origins**, if they are needed at all. In this flow the
+  browser navigates to Supabase and Google never sees the app's origin directly, so they may
+  be unnecessary — *unverified*, and cheap to add either way.
+
+So: stand production up, then do Google once against the real domain, keeping localhost in
+the allowlists so development still works.
+
+### The guard that blocks `ENVIRONMENT=production` today
+
+`Settings` refuses to start in production on the mock video provider, and `VIDEO_PROVIDER`
+accepts only `mock` or `vdocipher`. **There is therefore no way to run production without a
+VdoCipher account and secret**, even for a launch whose every lesson is a YouTube one.
+
+That guard is right, and should not be loosened casually: with the mock selected, `main.py`
+also mounts the `/api/dev` router, which accepts uploads and serves files. Publicly. The
+guard is what stops that reaching the internet.
+
+But the YouTube work made a case it was not written for. If the first release is free,
+YouTube-hosted content, three options exist and only one of them is honest:
+
+1. Get VdoCipher now. Correct if any lesson is to be gated, and it is on the critical path
+   anyway.
+2. Run the deployment as `ENVIRONMENT=staging`. It would start, and every production guard
+   — plaintext CORS, missing service-role key, wildcard origins — would be off. Do not.
+3. Add a third provider value, `none`: no managed video, no dev router, lessons must be
+   YouTube or have no video. Small, keeps every other production guard, and makes a
+   YouTube-only launch legitimately expressible. This is the right answer if VdoCipher is
+   not ready and launch is.
+
+---
+
+## 3.7 Can courses still be uploaded after launch?
+
+Yes, architecturally: creating a course, its modules and lessons, attaching video and
+publishing are all admin-panel operations against the running system. No deploy, no
+migration, no code change. That part is sound.
+
+Four things get in the way in practice, in descending order of how likely they are to stop
+you dead:
+
+**The first real VdoCipher upload will be refused by the browser.** The admin's browser
+POSTs the file straight to the provider's upload URL by XHR, which `connect-src` governs —
+and the policy lists only this app, the API, Supabase and Stripe. With the mock the upload
+URL *is* the API origin, so this has never shown up. With VdoCipher it is their endpoint,
+whose host is minted per upload by their API and has never been observed from here, so it
+cannot be derived in advance: `csp.mjs` carries a deliberately empty `VDOCIPHER_UPLOAD_HOSTS`
+with instructions. Attempt one upload, read the refused origin out of the browser console's
+CSP violation, add it. The failure message now names the origin and says to check for a CSP
+violation, because this exact shape of bug has cost this project an evening before.
+
+**Admin lockout.** Authoring needs an admin session at `aal2` with the pinned authenticator.
+Lose the phone and nobody can publish anything until someone with the database connection
+string runs `scripts/reset_admin_mfa.py`. Before launch: enrol, and make sure the person who
+would run that script has what they need.
+
+**Uploads are one at a time.** `PILOT.md` §1 scoped a bulk queue for ~50 clips; what exists
+is a single file input per lesson. Not a blocker, but adding a course of fifty videos is
+fifty manual uploads, and that is the week after launch, not before it.
+
+**Mock uploads do not survive a restart on Render.** The store is a directory on the
+instance's disk, which is ephemeral there. Irrelevant once VdoCipher is in use, and fatal if
+anyone is tempted to run the mock in a deployed environment — which is the other reason not
+to weaken the production guard.
+
+---
+
 ## 4. Significant gaps — not blockers, but do not discover these in week two
 
 **Payments.** There is no Stripe code at all — only unused settings. `POST /enrollments`
@@ -162,10 +246,13 @@ Ordered by what goes wrong if it is skipped, not by effort.
    student.
 
 **Before launch**
-4. VdoCipher: real account, real upload of the real clips, real playback. Allow for this
-   taking several days, not an afternoon.
-5. Deploy to Render (Oregon) and Vercel on paid tiers; run the existing load test against
-   staging on the real network path, because the only numbers we have are from a laptop.
+4. Deploy to Render (Oregon) and Vercel on paid tiers, *then* configure Google against the
+   real domain (§3.6). Run the existing load test against staging on the real network path,
+   because the only numbers we have are from a laptop.
+5. VdoCipher: real account, real upload of the real clips, real playback — including adding
+   their upload host to `connect-src` (§3.7), which no amount of local testing will surface.
+   Allow several days, not an afternoon. If launch is YouTube-only and VdoCipher is not
+   ready, build the `none` provider instead (§3.6) rather than deploying as staging.
 6. Certificates: issue, verify, revoke — or remove the claim from the marketing copy.
 7. One end-to-end test over the critical path, run in CI.
 8. Legal pages.
@@ -197,6 +284,12 @@ Stated explicitly so none of it is mistaken for a checked claim.
   transport. Nothing here has ever talked to VdoCipher.
 - **Current performance under real conditions.** The p95 of 56 ms at 10–15 rps was measured
   on a laptop against a local database. The deployed number is unknown and will be worse.
+- **Whether Google's "Authorised JavaScript origins" is needed for this flow at all.** The
+  browser navigates to Supabase, not to Google directly, so it may not be — I could not
+  reach Google's documentation from this session to confirm. Adding the origin costs
+  nothing, so add it.
+- **VdoCipher's upload host**, which `connect-src` will need. It is minted per upload by
+  their API and has never been seen from here.
 - **Whether 50–100 students is concurrent or total.** The analysis in `AUTH_AND_SCALE.md`
   assumed 100 *concurrent*. If that is the total enrolled, actual peak load is far lower and
   the infrastructure question is smaller than it looks.

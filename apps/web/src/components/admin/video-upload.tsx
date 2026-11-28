@@ -133,7 +133,20 @@ export function VideoUpload({
           request.status >= 200 && request.status < 300
             ? resolve()
             : reject(new Error(`upload failed (${request.status})`));
-        request.onerror = () => reject(new Error("upload failed"));
+        request.onerror = () =>
+          // status 0 with no response is what a CSP refusal looks like from
+          // here, and it is indistinguishable from the network being down.
+          // Say both, because the first one has cost this project an evening
+          // before and the upload host is not in connect-src until someone
+          // puts it there -- see csp.mjs.
+          reject(
+            new Error(
+              `Could not reach the upload host (${new URL(ticket.upload_url).origin}). ` +
+                "Either the network failed, or the Content-Security-Policy's " +
+                "connect-src does not list that origin — check the browser " +
+                "console for a CSP violation.",
+            ),
+          );
         request.send(form);
       });
 

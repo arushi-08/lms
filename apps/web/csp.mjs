@@ -11,6 +11,19 @@
 
 export const DEFAULT_API_URL = "http://localhost:8000";
 
+/**
+ * Hosts the admin's browser uploads video to.
+ *
+ * Empty until the VdoCipher account exists. The upload URL is minted by their
+ * API per upload and its host has never been observed from here, so guessing
+ * it would be worse than leaving this visible and empty: a wrong guess reads
+ * as "handled" in review and still fails at the first upload.
+ *
+ * To fill it in: attempt one upload in the admin panel, read the refused
+ * origin out of the browser console's CSP violation, and add it here.
+ */
+export const VDOCIPHER_UPLOAD_HOSTS = [];
+
 export function apiOriginFrom(raw) {
   try {
     return new URL(raw || DEFAULT_API_URL).origin;
@@ -44,7 +57,21 @@ export function buildCsp(apiUrl, { dev = false } = {}) {
     "font-src 'self' data:",
     // The browser talks to the API directly for playback grants, progress,
     // quiz submission and every admin mutation.
-    `connect-src 'self' ${api} https://*.supabase.co wss://*.supabase.co https://api.stripe.com`,
+    // The admin uploads a video straight to the provider, by XHR, which
+    // connect-src governs. With the mock that URL is the API origin, already
+    // listed. With VdoCipher it is their upload endpoint, and the exact host
+    // comes from their API at runtime -- so it cannot be derived here and has
+    // to be added once it is known. Until then a real upload is refused by the
+    // browser before it is sent, which looks exactly like the network being
+    // down. See docs/LAUNCH.md.
+    [
+      "connect-src 'self'",
+      api,
+      "https://*.supabase.co",
+      "wss://*.supabase.co",
+      "https://api.stripe.com",
+      ...VDOCIPHER_UPLOAD_HOSTS,
+    ].join(" "),
     // youtube-nocookie rather than youtube.com: it is the privacy-preserving
     // embed domain, and students are in jurisdictions where that matters.
     // youtube.com is listed alongside it because the player can redirect a
