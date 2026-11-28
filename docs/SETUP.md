@@ -136,17 +136,55 @@ cannot delete objects.
 Then run **LMS nightly backup** manually once (Actions → Run workflow) to confirm it works,
 rather than finding out at 02:17.
 
-## 3. VdoCipher — *needed only when real DRM playback matters*
+## 3. VdoCipher — *needed before anything is deployed*
 
-The build uses `VIDEO_PROVIDER=mock` until this exists. When you create the account:
+Production refuses to start on the mock provider (`app/config.py`), so this is on the
+critical path for deployment, not only for DRM.
 
-1. Set `VIDEO_PROVIDER=vdocipher` and `VDOCIPHER_API_SECRET` in the backend environment.
-2. In the VdoCipher dashboard: enable DRM, **disable offline download**, and restrict the
-   player domain allowlist to the production and preview domains.
-3. Upload the 4–5 sample clips and confirm the watermark shows the viewer's email.
+1. **Get the API secret.** VdoCipher dashboard → Config → API Credentials.
 
-Start on the trial, then size the plan from measured bandwidth — see `PLAN.md` §4.1. Do not
-buy a tier before you have a week of real numbers.
+2. **Check it works before wiring it into the app**, so the first thing to talk to a new
+   account is a script rather than a student pressing play. `VdoCipherProvider` has been
+   unit-tested against a fake HTTP layer since it was written and has never spoken to the
+   real API.
+
+   ```bash
+   cd apps/api && . .venv/bin/activate
+   export VDOCIPHER_API_SECRET=<the secret>
+   python ../../scripts/check_vdocipher.py                 # read-only: does the key work
+   python ../../scripts/check_vdocipher.py --upload-host   # also: what does the CSP need
+   ```
+
+3. **Add the upload host to the CSP.** This is the step that is easy to miss and expensive
+   to debug. The admin's browser uploads the file straight to a URL VdoCipher mints per
+   upload, by XHR, which `connect-src` governs — and that host is not in the policy. The
+   browser refuses the request before sending it, which from JavaScript is indistinguishable
+   from the network being down.
+
+   `--upload-host` prints the line to paste into `VDOCIPHER_UPLOAD_HOSTS` in
+   `apps/web/csp.mjs`. Run it twice: if the host differs between runs, use the wildcard form
+   of its parent rather than pinning one bucket.
+
+4. **Switch the provider** in `apps/api/.env`:
+
+   ```
+   VIDEO_PROVIDER=vdocipher
+   VDOCIPHER_API_SECRET=<the secret>
+   ```
+
+   Restart the API. `Settings` refuses to start if the secret is missing.
+
+5. **Re-upload every managed video.** This catches people out: existing lessons hold mock
+   ids like `mock-f767…`, which mean nothing to VdoCipher, so playback fails on each one
+   until the clip is uploaded again through the admin panel. YouTube lessons are unaffected
+   — they never used a provider.
+
+   `scripts/diagnose_progress.py` lists lessons whose video is not playable, which is a
+   quick way to see what is left.
+
+6. **Watch one video end to end** as a student: play, seek, let the progress bar move,
+   confirm the watermark shows your email. That exercises OTP issuance, the concurrent-session
+   cap and the playback ledger together, none of which has ever run against the real provider.
 
 ## 4. Render (free) — *needed for a deployed backend*
 
