@@ -139,6 +139,9 @@ export function VideoPlayer({
   if (grant.provider === "youtube" && grant.youtube_video_id) {
     return (
       <YouTubePlayer
+        // Keyed, so switching lesson rebuilds the player from scratch instead
+        // of reusing one that may still be showing the last video's failure.
+        key={grant.youtube_video_id}
         videoId={grant.youtube_video_id}
         startSeconds={grant.last_position_seconds}
         onTick={(currentTime) => {
@@ -152,7 +155,10 @@ export function VideoPlayer({
           lastSent.current = 0;
           void beat(watched.current, currentTime);
         }}
-        onError={setError}
+        // The player renders its own failure -- this branch has no error UI of
+        // its own, and handing it a setter whose state is never displayed is
+        // how a blocked script became an unexplained black rectangle.
+        onError={(message) => console.error(`[youtube] ${message}`)}
       />
     );
   }

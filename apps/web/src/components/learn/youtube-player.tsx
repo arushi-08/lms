@@ -1,30 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { Alert } from "@/components/ui/alert";
 
 /**
  * A YouTube lesson, played inside the course.
  *
- * The point of embedding rather than linking out is that the student stays
- * here and their progress is tracked. That second half is why this uses the
- * IFrame Player API rather than a plain `<iframe>`: a bare embed plays fine and
- * tells us nothing, so the progress bar would never move and the lesson could
- * never complete.
+ * The point of embedding rather than linking out is that the student stays here
+ * and their progress is tracked. That second half is why this uses the IFrame
+ * Player API rather than a plain `<iframe>`: a bare embed plays fine and tells
+ * us nothing, so the progress bar would never move and the lesson could never
+ * complete.
  *
- * The player reports position; this component turns that into the same
- * forward-only accumulation the uploaded-video player does, and hands it to the
- * same heartbeat. The server clamps it either way, so a YouTube lesson is no
- * more trustworthy and no less than any other.
+ * Two things in here are the result of this failing in use, and both are worth
+ * keeping:
  *
- * What it does not do is pretend the video is protected. It is public on
- * YouTube, the branding stays, and the "Watch on YouTube" affordance is part of
- * the player we are required to show unmodified.
+ * **It never shows a silent black box.** Every way this can fail now renders a
+ * sentence. The first version handed failures to a parent callback that the
+ * parent, in the branch that renders this component, never displayed — so a
+ * blocked script, an unembeddable video and a typo'd id all looked identical:
+ * a black rectangle and nothing else, anywhere.
+ *
+ * **It mounts into a throwaway child, not the node React owns.** `YT.Player`
+ * *replaces* the element it is given with an iframe. Handing it a ref'd node
+ * means React is holding a pointer to something that no longer exists, and with
+ * `reactStrictMode` on, effects run twice in development — the first player is
+ * built after the first cleanup has already run, and the second builds against
+ * a node the first one removed. A black box, intermittently, in dev only, which
+ * is the worst possible shape for a bug.
  */
 
 const API_SRC = "https://www.youtube.com/iframe_api";
 
 /** How often to sample position. The API has no timeupdate event. */
 const POLL_MS = 1000;
+
+/**
+ * How long to wait for the player to say it is ready before giving up.
+ *
+ * Generous: a cold CDN fetch on a slow connection is legitimately a few
+ * seconds. What this catches is the case where nothing is coming at all --
+ * an extension blocking YouTube, a network that cannot reach it, a CSP that
+ * refuses the frame -- none of which produce an error event.
+ */
+const READY_TIMEOUT_MS = 15_000;
 
 type Player = {
   getCurrentTime: () => number;
@@ -41,6 +61,32 @@ declare global {
   interface Window {
     YT?: YT;
     onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+/**
+ * What YouTube's error codes mean, as far as we can act on them.
+ *
+ * Each maps to something the person reading it could do. "An error occurred"
+ * sends an admin to the wrong place; "the owner has disabled embedding" sends
+ * them to YouTube Studio, which is where the fix is.
+ */
+function describeError(code: number): string {
+  switch (code) {
+    case 2:
+      return "That video id is not valid. Re-paste the link in the admin panel.";
+    case 5:
+      return "The video player could not play this video in this browser.";
+    case 100:
+      return "That video does not exist on YouTube any more, or has been made private.";
+    case 101:
+    case 150:
+      return (
+        "The owner of this video has disabled playing it on other sites. " +
+        "In YouTube Studio, set it to allow embedding."
+      );
+    default:
+      return `YouTube refused to play this video (error ${code}).`;
   }
 }
 
@@ -76,8 +122,17 @@ function loadApi(): Promise<YT> {
     // Reject rather than hang: a blocked script -- an extension, a CSP
     // mistake, a corporate proxy -- otherwise leaves a permanent spinner with
     // nothing in any log to explain it.
-    script.onerror = () =>
-      reject(new Error("the YouTube player could not be loaded"));
+    script.onerror = () => {
+      // A failed load must not be cached as the answer: the next lesson should
+      // get a fresh attempt rather than inheriting this rejection forever.
+      apiReady = null;
+      reject(
+        new Error(
+          "Could not load the YouTube player. It may be blocked by a browser " +
+            "extension, an ad blocker, or this network.",
+        ),
+      );
+    };
     document.head.appendChild(script);
   });
 
@@ -96,9 +151,13 @@ export function YouTubePlayer({
   /** Called about once a second with the player's current position. */
   onTick: (currentTime: number) => void;
   onEnded: (currentTime: number) => void;
-  onError: (message: string) => void;
+  /** For the caller's own logging. The message is rendered here regardless. */
+  onError?: (message: string) => void;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+
   // Held in refs so that a parent re-render with new callbacks never tears
   // down and rebuilds the player mid-lesson, which would restart the video.
   // Written in an effect rather than during render: a ref write during render
@@ -114,19 +173,57 @@ export function YouTubePlayer({
     onErrorRef.current = onError;
   }, [onTick, onEnded, onError]);
 
+  const fail = useCallback((message: string) => {
+    setProblem(message);
+    onErrorRef.current?.(message);
+  }, []);
+
   const mount = useCallback(async () => {
-    const host = mountRef.current;
-    if (!host) return () => {};
+    const container = mountRef.current;
+    if (!container) return () => {};
 
     let player: Player | null = null;
     let timer: ReturnType<typeof setInterval> | null = null;
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
+
+    // A child of our own making. YT.Player replaces whatever element it is
+    // given, so it must never be the node React is holding a ref to.
+    container.replaceChildren();
+    const target = document.createElement("div");
+    container.appendChild(target);
+
+    const cleanup = () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      if (readyTimer) clearTimeout(readyTimer);
+      try {
+        player?.destroy();
+      } catch {
+        // Already gone with the unmounted node; nothing to clean up.
+      }
+      // Whatever YouTube left behind goes with it, so a remount starts clean
+      // rather than stacking a second iframe on the first.
+      container.replaceChildren();
+    };
 
     try {
       const YT = await loadApi();
-      if (cancelled || !mountRef.current) return () => {};
+      if (cancelled || !mountRef.current) return cleanup;
 
-      player = new YT.Player(host, {
+      // Cleared by onReady. If it fires, the player never started -- which is
+      // the whole point, so there is no "but the player object exists" case to
+      // exempt here: a constructed player that never signals ready is exactly
+      // the black box this is for.
+      readyTimer = setTimeout(() => {
+        if (cancelled) return;
+        fail(
+          "The video player did not start. It may be blocked by a browser " +
+            "extension, an ad blocker, or this network.",
+        );
+      }, READY_TIMEOUT_MS);
+
+      player = new YT.Player(target, {
         videoId,
         host: "https://www.youtube-nocookie.com",
         playerVars: {
@@ -140,50 +237,42 @@ export function YouTubePlayer({
         },
         events: {
           onReady: () => {
+            if (cancelled) return;
+            if (readyTimer) clearTimeout(readyTimer);
+            setReady(true);
             timer = setInterval(() => {
               if (!player) return;
               onTickRef.current(player.getCurrentTime());
             }, POLL_MS);
           },
           onStateChange: (event: { data: number }) => {
-            if (!player) return;
+            if (!player || cancelled) return;
             if (event.data === YT.PlayerState.ENDED) {
               onEndedRef.current(player.getCurrentTime());
             }
           },
-          onError: () => {
-            // The usual causes are a video that has been deleted, made
-            // private, or marked not-embeddable by its owner -- all of which
-            // are fixed in YouTube, not here, so say so.
-            onErrorRef.current(
-              "This video is unavailable. It may have been removed, made " +
-                "private, or set to block embedding.",
-            );
+          onError: (event: { data: number }) => {
+            if (cancelled) return;
+            if (readyTimer) clearTimeout(readyTimer);
+            fail(describeError(event.data));
           },
         },
       });
     } catch (cause) {
       if (!cancelled) {
-        onErrorRef.current(
+        fail(
           cause instanceof Error ? cause.message : "The video player failed to load.",
         );
       }
     }
 
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-      // Without this the iframe and its polling survive a lesson change and
-      // two lessons report progress at once.
-      try {
-        player?.destroy();
-      } catch {
-        // Already gone with the unmounted node; nothing to clean up.
-      }
-    };
-  }, [videoId]);
+    return cleanup;
+  }, [videoId, fail]);
 
   useEffect(() => {
+    // No state reset here: the caller keys this component by video id, so a
+    // different video remounts it with fresh state rather than reusing an
+    // instance that is still holding the previous one's error.
     let dispose: (() => void) | undefined;
     let disposed = false;
 
@@ -198,10 +287,35 @@ export function YouTubePlayer({
     };
   }, [mount]);
 
+  if (problem) {
+    return (
+      <div className="grid gap-2">
+        <Alert tone="danger">{problem}</Alert>
+        <p className="text-xs text-muted">
+          You can still watch it on{" "}
+          <a
+            href={`https://www.youtube.com/watch?v=${videoId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-accent hover:underline"
+          >
+            YouTube
+          </a>
+          , though your progress will not be recorded there.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
-      {/* Replaced by the player's iframe once the API is ready. */}
-      <div ref={mountRef} className="size-full" />
+    <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
+      {!ready ? (
+        <p className="absolute inset-0 grid place-items-center text-sm text-white/70">
+          Loading the video…
+        </p>
+      ) : null}
+      {/* Our own child goes in here and is what YouTube replaces. */}
+      <div ref={mountRef} className="relative size-full" />
     </div>
   );
 }
